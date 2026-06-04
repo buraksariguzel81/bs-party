@@ -1,0 +1,43 @@
+workflows:
+  react-android-workflow:
+    name: React Android APK Build
+    max_build_duration: 30
+    instance_type: mac_mini_m1
+    environment:
+      node: latest
+      java: 21
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: 'main'
+    scripts:
+      - name: Node.js Bagliliklarini Yukle
+        script: |
+          npm install
+      - name: React Web Ciktisini Hazirla
+        script: |
+          npm run build
+      - name: Klasör Kontrolü ve Eşitleme
+        script: |
+          # Eğer çıktı dist klasöründeyse ve Capacitor build bekliyorsa boş kalmasın diye kopyalıyoruz
+          if [ -d "dist" ]; then cp -r dist build 2>/dev/null || true; fi
+          if [ -d "build" ]; then cp -r build dist 2>/dev/null || true; fi
+      - name: Capacitor Android Senkronizasyonunu Yap
+        script: |
+          if [ ! -d "android" ] || [ ! -f "android/gradlew" ]; then
+            rm -rf android
+            npx cap add android
+          fi
+          npx cap sync android
+      - name: Gradle ile Android APK Derle (Release)
+        script: |
+          cd android
+          # Fix carriage returns if pushed from Windows
+          perl -pi -e 's/\r\n/\n/g' gradlew
+          # Regenerate corrupt or invalid gradle-wrapper.jar dynamically
+          gradle wrapper
+          chmod +x gradlew
+          ./gradlew assembleRelease
+    artifacts:
+      - android/app/build/outputs/apk/release/*.apk

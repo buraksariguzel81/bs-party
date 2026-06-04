@@ -1,0 +1,6 @@
+{
+  "name": "BS Party",
+  "description": "2, 3 ve 4 kişilik, arkadaşlarınızla aynı ekranda oynayabileceğiniz eğlenceli parti oyunları: Hafıza Kartları, Balon Şişirme, Işık Avcısı ve Sevimli Koşu!",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

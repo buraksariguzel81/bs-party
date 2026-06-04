@@ -1,0 +1,8 @@
+{
+  "appId": "com.bsparty.app",
+  "appName": "BS Party",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}
