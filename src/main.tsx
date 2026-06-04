@@ -4802,7 +4802,7 @@ function UNUSED_renderReactionGame() {
   activePlayers.forEach(p => roundPoints[p.id] = 0);
 
   const container = document.createElement('div');
-  container.className = "w-full max-w-2xl relative z-10 flex flex-col h-[90vh] max-h-[850px] justify-between space-y-4 animate-fade-in select-none text-black";
+  container.className = "w-full max-w-6xl relative z-10 flex flex-col h-[90vh] max-h-[850px] justify-between space-y-4 animate-fade-in select-none text-black";
 
   // Top header panel
   const header = document.createElement('div');
@@ -6111,8 +6111,6 @@ function renderCostumeShop() {
     return;
   }
 
-  const shopActivePlayer = activePlayer;
-
   // Header Panel
   const headerDiv = document.createElement('div');
   headerDiv.className = "bg-white border-4 border-black p-5 sm:p-6 text-center space-y-2.5 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] relative overflow-hidden text-black";
@@ -6429,9 +6427,9 @@ function renderCostumeShop() {
 
     function handleAvatarUpload(file: File) {
       if (!file.type.startsWith('image/')) return;
-      resizeAndSetCustomImage(shopActivePlayer.id, file, (resizedBase64) => {
-        shopActivePlayer.customImage = resizedBase64;
-        savePlayerPersistentData(shopActivePlayer);
+      resizeAndSetCustomImage(activePlayer.id, file, (resizedBase64) => {
+        activePlayer.customImage = resizedBase64;
+        savePlayerPersistentData(activePlayer);
         sfx.playPowerUp();
         render();
       });
@@ -6439,34 +6437,34 @@ function renderCostumeShop() {
 
     // 3. Remove custom image trigger
     document.getElementById('shop-remove-img-btn')?.addEventListener('click', () => {
-      shopActivePlayer.customImage = null;
-      savePlayerPersistentData(shopActivePlayer);
+      activePlayer.customImage = null;
+      savePlayerPersistentData(activePlayer);
       sfx.playTick();
       render();
     });
 
     // 4. Buy accessory bindings
     SHOP_ITEMS.forEach(item => {
-      const isUnlocked = shopActivePlayer.unlockedAccessories?.includes(item.id);
+      const isUnlocked = activePlayer.unlockedAccessories?.includes(item.id);
       if (isUnlocked) {
         document.getElementById(`btn-equip-${item.id}`)?.addEventListener('click', () => {
-          if (shopActivePlayer.activeAccessory === item.id) {
-            shopActivePlayer.activeAccessory = null;
+          if (activePlayer.activeAccessory === item.id) {
+            activePlayer.activeAccessory = null;
           } else {
-            shopActivePlayer.activeAccessory = item.id;
+            activePlayer.activeAccessory = item.id;
           }
-          savePlayerPersistentData(shopActivePlayer);
+          savePlayerPersistentData(activePlayer);
           sfx.playPowerUp();
           render();
         });
       } else {
         document.getElementById(`btn-buy-${item.id}`)?.addEventListener('click', () => {
-          if ((shopActivePlayer.globalCoins || 0) >= item.cost) {
-            shopActivePlayer.globalCoins = (shopActivePlayer.globalCoins || 0) - item.cost;
-            if (!shopActivePlayer.unlockedAccessories) shopActivePlayer.unlockedAccessories = [];
-            shopActivePlayer.unlockedAccessories.push(item.id);
-            shopActivePlayer.activeAccessory = item.id;
-            savePlayerPersistentData(shopActivePlayer);
+          if ((activePlayer.globalCoins || 0) >= item.cost) {
+            activePlayer.globalCoins = (activePlayer.globalCoins || 0) - item.cost;
+            if (!activePlayer.unlockedAccessories) activePlayer.unlockedAccessories = [];
+            activePlayer.unlockedAccessories.push(item.id);
+            activePlayer.activeAccessory = item.id;
+            savePlayerPersistentData(activePlayer);
             sfx.playPowerUp();
             render();
           }

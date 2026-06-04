@@ -37,7 +37,7 @@
 }
 
 /* Neobrutalist focus glows */
-.glow-p1 { box-shadow: 6px 6px 0px 0px rgb(107, 72, 72); }
+.glow-p1 { box-shadow: 6px 6px 0px 0px rgba(0, 0, 0, 1); }
 .glow-p2 { box-shadow: 6px 6px 0px 0px rgba(0, 0, 0, 1); }
 .glow-p3 { box-shadow: 6px 6px 0px 0px rgba(0, 0, 0, 1); }
 .glow-p4 { box-shadow: 6px 6px 0px 0px rgba(0, 0, 0, 1); }

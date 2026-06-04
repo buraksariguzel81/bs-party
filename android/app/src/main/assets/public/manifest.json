@@ -1,0 +1,18 @@
+{
+  "name": "BS Party - 4 Kişilik Eğlence Arenası",
+  "short_name": "BS Party",
+  "description": "2, 3 ve 4 kişilik, arkadaşlarınızla aynı ekranda oynayabileceğiniz eğlenceli parti oyunları: Hafıza Kartları, Balon Şişirme ve Hızlı Refleks!",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#FFEAA7",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3408/3408506.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
