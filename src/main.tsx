@@ -4,6 +4,11 @@
  */
 
 import './index.css';
+import { registerSetScreen, registerHandleGameFinished, registerRenderTrigger } from './globals';
+import { renderLobby } from './games/lobby';
+import { renderCharSelect } from './games/charSelect';
+import { renderGamesHub } from './games/gamesHub';
+import { renderGameOver } from './games/gameOver';
 
 // Safe LocalStorage Wrapper for sandbox/iframe environments
 const safeLocalStorage = {
@@ -297,7 +302,7 @@ interface Player {
 interface GameState {
   playerCount: number;
   players: Player[];
-  currentScreen: 'lobby' | 'charSelect' | 'gamesHub' | 'balloonGame' | 'memoryGame' | 'colorTrapGame' | 'clickDerbyGame' | 'raceGame' | 'bombGame' | 'mathDashGame' | 'gameOver' | 'costumeShop';
+  currentScreen: 'lobby' | 'charSelect' | 'gamesHub' | 'balloonGame' | 'memoryGame' | 'colorTrapGame' | 'clickDerbyGame' | 'raceGame' | 'bombGame' | 'mathDashGame' | 'gameOver' | 'costumeShop' | 'achievements';
   scores: { [playerId: number]: number };
   gamePlaylist?: ('balloonGame' | 'memoryGame' | 'colorTrapGame' | 'clickDerbyGame' | 'raceGame' | 'bombGame' | 'mathDashGame')[];
   playlistActive?: boolean;
@@ -385,6 +390,26 @@ const ACHIEVEMENTS: Achievement[] = [
 let activeShopPlayerId = 1;
 // Keep track of which parent screen opened the shop
 let lastScreenBeforeShop: GameState['currentScreen'] = 'gamesHub';
+
+// Active player selected for Achievements screen
+let activeAchievementsPlayerId = 1;
+
+// Persistent memory game state to handle window resizes gracefully without losing matches
+let activeMemoryGameState: {
+  mode: any;
+  deck: any[];
+  flippedIndices: number[];
+  matchedIndices: number[];
+  localScores: { [id: number]: number };
+  playerMismatches: { [id: number]: number };
+  activeTurnIndex: number;
+} | null = null;
+
+let activeMemoryTimers: any[] = [];
+function clearActiveMemoryTimers() {
+  activeMemoryTimers.forEach(t => clearTimeout(t));
+  activeMemoryTimers = [];
+}
 
 function loadPlayerPersistentData(id: number) {
   try {
@@ -1174,6 +1199,12 @@ function setScreen(newScreen: GameState['currentScreen']) {
   const isMiniGame = (screen: string) => ['balloonGame', 'memoryGame', 'colorTrapGame', 'clickDerbyGame', 'raceGame', 'bombGame', 'mathDashGame'].includes(screen);
   const bridge = (window as any).playgamaBridge;
 
+  // Clear memory game states when entering memory game fresh (not on resizing)
+  if (newScreen === 'memoryGame' && oldScreen !== 'memoryGame') {
+    activeMemoryGameState = null;
+    clearActiveMemoryTimers();
+  }
+
   // 1. Leaving a mini-game to return to hub
   if (isMiniGame(oldScreen) && !isMiniGame(newScreen)) {
     if (bridge && bridge.game) {
@@ -1207,11 +1238,64 @@ function setScreen(newScreen: GameState['currentScreen']) {
   render();
 }
 
+let bypassPortraitWarning = false;
+
+window.addEventListener('resize', () => {
+  // Prevent excessive updates when playing, but clean render for orientation flips
+  render();
+});
+
+window.addEventListener('orientationchange', () => {
+  render();
+});
+
 function render() {
-  appRoot.className = "min-h-screen brutalist-grid-bg text-black relative flex flex-col items-center justify-center p-3 sm:p-6 font-sans select-none border-[8px] sm:border-[16px] border-black overflow-x-hidden";
+  appRoot.className = "min-h-screen brutalist-grid-bg text-black relative flex flex-col items-center justify-start py-6 px-3 sm:px-6 font-sans select-none border-[8px] sm:border-[16px] border-black overflow-x-hidden overflow-y-auto";
   
   // Clean container
   appRoot.innerHTML = '';
+
+  // Landscape check for mobile device experiences
+  if (window.innerHeight > window.innerWidth && window.innerWidth < 1024 && !bypassPortraitWarning) {
+    const ambientGrid = document.createElement('div');
+    ambientGrid.className = "absolute inset-0 pointer-events-none overflow-hidden z-0";
+    appRoot.appendChild(ambientGrid);
+
+    const warningContainer = document.createElement('div');
+    warningContainer.className = "w-full max-w-md relative z-10 p-4 flex flex-col items-center justify-center";
+    warningContainer.innerHTML = `
+      <div class="m-auto bg-[#FFEAA7] border-4 border-black p-6 sm:p-8 w-full flex flex-col items-center text-center space-y-6 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] text-black animate-scale-up z-50">
+        <div class="text-6xl animate-bounce-short">📱🔄</div>
+        <div>
+          <h3 class="text-2xl font-display font-black text-black uppercase tracking-tight">EKRANI YAN ÇEVİRİN!</h3>
+          <p class="text-xs font-semibold text-black/80 mt-2 leading-relaxed">
+            BS Party, tek bir telefondan 5 kişiye kadar yan yana kapışabilmeniz için <b>yatay (landscape) modda</b> oynanacak şekilde tasarlanmıştır. Ekrana sığmak ve butonları rahatça kullanmak için lütfen telefonunuzu yatay çevirin!
+          </p>
+          <div class="mt-4 flex items-center justify-center gap-2 text-[10px] font-mono bg-black text-white px-3 py-2 border-2 border-black">
+            <span>ÖNERİLEN: <b class="text-emerald-400">YATAY / LANDSCAPE</b></span>
+          </div>
+        </div>
+
+        <div class="flex flex-col w-full gap-2 pt-2">
+          <button id="bypass-portrait-btn" class="w-full py-3.5 bg-[#55EFC4] hover:bg-black hover:text-white border-3 border-black text-black font-black text-xs tracking-wider uppercase transition-all shadow-[4px_4px_0_rgba(0,0,0,1)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none cursor-pointer">
+            Yine de Devam Et 🕹️
+          </button>
+          <p class="text-[9px] text-black/50 font-bold">Masaüstündeyseniz veya yan çeviremiyorsanız tıklayıp geçebilirsiniz.</p>
+        </div>
+      </div>
+    `;
+    appRoot.appendChild(warningContainer);
+
+    document.getElementById('bypass-portrait-btn')?.addEventListener('click', () => {
+      bypassPortraitWarning = true;
+      sfx.playTick();
+      render();
+    });
+
+    renderGlobalMuteToggle(appRoot);
+    return;
+  }
+
   
   const ambientGrid = document.createElement('div');
   ambientGrid.className = "absolute inset-0 pointer-events-none overflow-hidden z-0";
@@ -1256,6 +1340,9 @@ function render() {
       break;
     case 'costumeShop':
       renderCostumeShop();
+      break;
+    case 'achievements':
+      renderAchievements();
       break;
   }
 }
@@ -2357,7 +2444,7 @@ function renderEditPlayersModal() {
 // ==========================================
 function renderLobby() {
   const container = document.createElement('div');
-  container.className = "w-full max-w-2xl bg-white border-4 border-black p-6 sm:p-10 text-center shadow-[10px_10px_0px_0px_rgba(0,0,0,1)] relative z-10 flex flex-col items-center space-y-8 animate-fade-in";
+  container.className = "w-full max-w-2xl bg-white border-4 border-black p-6 sm:p-10 text-center shadow-[10px_10px_0px_0px_rgba(0,0,0,1)] relative z-10 flex flex-col items-center space-y-8 animate-fade-in my-auto";
   
   const bridge = (window as any).playgamaBridge;
   let playgamaConnectorHTML = '';
@@ -2426,6 +2513,14 @@ function renderLobby() {
       <button id="lobby-play-btn" class="w-full py-4 px-4 bg-[#55EFC4] text-black hover:bg-black hover:text-white border-4 border-black font-display font-black text-lg sm:text-xl uppercase cursor-pointer rounded-none select-none transition-all duration-200 shadow-[6px_6px_0px_rgba(0,0,0,1)] hover:shadow-[4px_4px_0_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-[1px_1px_0_rgba(0,0,0,1)] flex items-center justify-center gap-3">
         🎮 OYUNA GİR 🚀
       </button>
+      <div class="grid grid-cols-2 gap-2 w-full pt-1">
+        <button id="lobby-shop-btn" class="py-2.5 px-3 bg-[#A29BFE] hover:bg-black hover:text-white text-black font-black border-2 border-black uppercase text-[11px] cursor-pointer shadow-[3px_3px_0_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all leading-none rounded select-none">
+          🛍️ MAĞAZA
+        </button>
+        <button id="lobby-achievements-btn" class="py-2.5 px-3 bg-[#FF7675] hover:bg-black hover:text-white text-white font-black border-2 border-black uppercase text-[11px] cursor-pointer shadow-[3px_3px_0_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all leading-none rounded select-none">
+          🏆 BAŞARIMLAR
+        </button>
+      </div>
     </div>
 
     <!-- Device Mode Select (PC vs Mobile) -->
@@ -2529,6 +2624,17 @@ function renderLobby() {
     });
   }
 
+  document.getElementById('lobby-shop-btn')?.addEventListener('click', () => {
+    sfx.playTick();
+    lastScreenBeforeShop = 'lobby';
+    setScreen('costumeShop');
+  });
+
+  document.getElementById('lobby-achievements-btn')?.addEventListener('click', () => {
+    sfx.playTick();
+    setScreen('achievements');
+  });
+
   // Setup Device Select Listeners
   const pcModeBtn = document.getElementById('devicemode-pc');
   const mobileModeBtn = document.getElementById('devicemode-mobile');
@@ -2612,7 +2718,7 @@ function renderLobby() {
 // ==========================================
 function renderCharSelect() {
   const container = document.createElement('div');
-  container.className = "w-full max-w-6xl relative z-10 flex flex-col items-center space-y-4 animate-fade-in";
+  container.className = "w-full max-w-6xl relative z-10 flex flex-col items-center space-y-4 animate-fade-in my-auto";
   
   // Title
   const headerDiv = document.createElement('div');
@@ -2637,11 +2743,14 @@ function renderCharSelect() {
   
   controlsDiv.innerHTML = `
     <div class="flex gap-2">
-      <button id="char-back-btn" class="px-4 py-2 bg-white border-2 border-black hover:bg-black hover:text-white text-black font-black tracking-wide cursor-pointer duration-205 shadow-[2.5px_2.5px_0px_0px_rgba(0,0,0,1)] uppercase text-[10px] active:translate-x-[0.5px] active:translate-y-[0.5px] active:shadow-none select-none">
-        ◀ Geri Dön
+      <button id="char-back-btn" class="px-3.5 py-1.5 bg-white border-2 border-black hover:bg-neutral-100 text-black font-black tracking-wide cursor-pointer duration-205 shadow-[2px_2px_0px_rgba(0,0,0,1)] uppercase text-[10px] active:translate-x-[0.5px] active:translate-y-[0.5px] active:shadow-none select-none">
+        ◀ GERİ
       </button>
-      <button id="char-shop-btn" class="px-4 py-2 bg-[#FDCB6E] border-2 border-black hover:bg-black hover:text-white text-black font-black tracking-wide cursor-pointer duration-205 shadow-[2.5px_2.5px_0px_0px_rgba(0,0,0,1)] uppercase text-[10px] active:translate-x-[0.5px] active:translate-y-[0.5px] active:shadow-none select-none">
-        🛒 Mağaza & Gardırop
+      <button id="char-home-btn" class="px-3.5 py-1.5 bg-white border-2 border-black hover:bg-neutral-100 text-black font-black tracking-wide cursor-pointer duration-205 shadow-[2px_2px_0px_rgba(0,0,0,1)] uppercase text-[10px] active:translate-x-[0.5px] active:translate-y-[0.5px] active:shadow-none select-none flex items-center gap-1" title="Anasayfa">
+        🏠 LOBİ
+      </button>
+      <button id="char-shop-btn" class="px-3.5 py-1.5 bg-[#FDCB6E] border-2 border-black hover:bg-black hover:text-[#FDCB6E] text-black font-black tracking-wide cursor-pointer duration-205 shadow-[2px_2px_0px_rgba(0,0,0,1)] uppercase text-[10px] active:translate-x-[0.5px] active:translate-y-[0.5px] active:shadow-none select-none">
+        🛒 MAĞAZA
       </button>
     </div>
     
@@ -2680,57 +2789,54 @@ function renderCharSelect() {
   `;
   container.appendChild(activeCountHUD);
 
-  // Players grid of all 5 system players
+  // Players grid of all 5 system players - side-by-side (yana yana) always formatted beautifully
   const gridDiv = document.createElement('div');
-  gridDiv.className = "grid w-full gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 max-w-6xl";
+  gridDiv.className = "grid w-full gap-2 grid-cols-5 max-w-5xl shrink-0";
 
   state.players.forEach((player) => {
     const playerDiv = document.createElement('div');
     playerDiv.id = `player-card-${player.id}`;
     
-    // Set classes depending on if active (participating) or standby
+    // Vertical Layout + Shrunk (dikey yap ve kucult)
     if (player.active) {
-      playerDiv.className = `${player.color} border-4 border-black p-3 flex flex-col items-center text-center space-y-2.5 focus-within:ring-2 focus-within:ring-black transition-all duration-300 relative shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] opacity-100 scale-100`;
+      playerDiv.className = `${player.color} border-2 border-black p-1.5 sm:p-2 flex flex-col items-center justify-between text-center space-y-1.5 focus-within:ring-2 focus-within:ring-black transition-all duration-300 relative shadow-[2.5px_2.5px_0px_rgba(0,0,0,1)] opacity-100 scale-100 rounded-lg`;
     } else {
-      playerDiv.className = `bg-neutral-50 grayscale opacity-50 hover:opacity-100 hover:grayscale-30 border-4 border-black border-dashed p-3 flex flex-col items-center text-center space-y-2.5 transition-all duration-300 relative shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] scale-98`;
+      playerDiv.className = `bg-zinc-50 grayscale opacity-55 hover:opacity-100 hover:grayscale-0 border-2 border-black border-dashed p-1.5 sm:p-2 flex flex-col items-center justify-between text-center space-y-1.5 transition-all duration-300 relative shadow-[1.5px_1.5px_0px_rgba(0,0,0,1)] scale-98 rounded-lg`;
     }
     
     playerDiv.innerHTML = `
-      <!-- Active Swap Toggle Button -->
-      <button id="toggle-active-${player.id}" class="w-full py-1.5 bg-black hover:bg-neutral-900 border-2 border-black text-white font-black text-[9px] tracking-wide uppercase transition-all shadow-[2px_2px_0_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none cursor-pointer rounded-none select-none flex items-center justify-center gap-1">
-        ${player.active ? '🟢 KATILIYOR ✅' : '⚪ YEDEKTE (SEÇ)'}
-      </button>
-
-      <div class="absolute -top-3 left-3 px-1.5 py-0.5 text-[8px] font-display font-black text-white uppercase bg-black border border-black rotate-[-1deg] shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]">
+      <!-- Absolutely positioned P1/P5 Badge -->
+      <div class="absolute -top-2 left-1.5 px-1 py-0.5 text-[7px] font-display font-black text-white uppercase bg-black border border-black shadow-[1px_1px_0px_rgba(0,0,0,1)] select-none">
         P${player.id}
       </div>
 
-      <!-- Avatar & Name Input Side-By-Side (Super Compact) -->
-      <div class="w-full flex items-center gap-2 bg-white border-2 border-black p-1.5 shadow-[1px_1px_0px_rgba(0,0,0,1)]">
-        <!-- Compact Avatar Bubble -->
-        <div id="avatar-container-${player.id}" class="relative flex-shrink-0 flex items-center justify-center bg-neutral-100 border border-black/30 rounded-full w-9 h-9 select-none">
-          ${getPlayerAvatarHTML(player, "w-7 h-7 text-lg")}
-        </div>
-        
-        <!-- Name Input -->
-        <div class="flex-1 space-y-0.5 text-left min-w-0">
-          <label class="block text-[7.5px] font-display uppercase tracking-wider text-black/65 font-black leading-none">OYUNCU</label>
-          <input 
-            type="text" 
-            id="pname-input-${player.id}" 
-            value="${player.name || `Oyuncu ${player.id}`}"
-            class="w-full bg-neutral-50 border border-black/40 text-center text-[11px] font-black text-black py-0.5 px-1 rounded-none focus:outline-none transition-all duration-200 focus:ring-1 focus:ring-black font-sans leading-tight truncate"
-            placeholder="İsim gir..."
-            maxlength="12"
-          />
-        </div>
+      <!-- Avatar Bubble: Stacked Top (Dikey) -->
+      <div id="avatar-container-${player.id}" class="relative flex-shrink-0 flex items-center justify-center bg-white border-2 border-black rounded-full w-9 h-9 sm:w-12 sm:h-12 shadow-[1.5px_1.5px_0px_rgba(0,0,0,1)] select-none mt-1">
+        ${getPlayerAvatarHTML(player, "w-6 h-6 sm:w-8 sm:h-8 text-sm sm:text-base")}
       </div>
+      
+      <!-- Name Input: Stacked Middle (Dikey) -->
+      <div class="w-full bg-white border border-black p-1 shadow-[1px_1px_0px_rgba(0,0,0,1)]">
+        <input 
+          type="text" 
+          id="pname-input-${player.id}" 
+          value="${player.name || `Oyuncu ${player.id}`}"
+          class="w-full bg-zinc-50/80 border border-black/25 text-center text-[9px] sm:text-[10.5px] font-black text-black py-0.5 px-0.5 focus:outline-none transition-all duration-200 focus:bg-white font-sans leading-none truncate"
+          placeholder="..."
+          maxlength="8"
+        />
+      </div>
+
+      <!-- Toggle Active Status: Stacked Bottom (Dikey) -->
+      <button id="toggle-active-${player.id}" class="w-full py-1 bg-black hover:bg-zinc-800 border-2 border-black text-white font-black text-[8px] sm:text-[9.5px] tracking-wide uppercase transition-all shadow-[1.5px_1.5px_0_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none cursor-pointer select-none rounded whitespace-nowrap">
+        ${player.active ? '🟢 SEÇİLDİ' : '⚪ SEÇ'}
+      </button>
 
       <!-- Key assignment reminder -->
       ${!state.isMobileMode ? `
-      <div class="w-full bg-white border border-black rounded-none py-0.5 px-1 w-full flex items-center justify-between text-[9px] font-mono font-black shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]">
-        <span class="text-black uppercase tracking-widest text-[7px] font-bold">TUŞU:</span>
-        <span class="font-extrabold px-1 py-0.5 bg-black text-white border border-black text-[9px] leading-none">${player.keyLabel}</span>
+      <div class="w-full bg-white border border-black rounded py-0.5 px-1 flex items-center justify-between text-[7px] sm:text-[8px] font-mono leading-none shadow-[1px_1px_0px_rgba(0,0,0,1)]">
+        <span class="text-black font-semibold uppercase">TUŞUMIZ:</span>
+        <span class="font-extrabold px-1 bg-black text-white text-[8px] border border-black">${player.keyLabel}</span>
       </div>
       ` : ''}
     `;
@@ -2767,6 +2873,40 @@ function renderCharSelect() {
 
   container.appendChild(gridDiv);
   
+  // Bind top bar events in next tick
+  setTimeout(() => {
+    document.getElementById('char-back-btn')?.addEventListener('click', () => {
+      sfx.playTick();
+      setScreen('lobby');
+    });
+
+    document.getElementById('char-home-btn')?.addEventListener('click', () => {
+      sfx.playTick();
+      setScreen('lobby');
+    });
+
+    document.getElementById('char-shop-btn')?.addEventListener('click', () => {
+      sfx.playPowerUp();
+      lastScreenBeforeShop = 'charSelect';
+      setScreen('costumeShop');
+    });
+
+    document.getElementById('char-start-btn')?.addEventListener('click', () => {
+      if (isKadroReady) {
+        sfx.playFanfare();
+        state.playerCount = currentlyActiveCount;
+        state.players.forEach(p => {
+          state.scores[p.id] = 0;
+          p.score = 0;
+          if (p.active) {
+            savePlayerPersistentData(p);
+          }
+        });
+        setScreen('gamesHub');
+      }
+    });
+  }, 0);
+
   // Clear any existing contents of the parent and inject
   const previousContainer = appRoot.firstElementChild;
   if (previousContainer) {
@@ -2774,48 +2914,19 @@ function renderCharSelect() {
   } else {
     appRoot.appendChild(container);
   }
-
-  // Bind controls
-  document.getElementById('char-back-btn')?.addEventListener('click', () => {
-    sfx.playTick();
-    setScreen('lobby');
-  });
-  
-  document.getElementById('char-shop-btn')?.addEventListener('click', () => {
-    sfx.playPowerUp();
-    lastScreenBeforeShop = 'charSelect';
-    setScreen('costumeShop');
-  });
-  
-  const startBtn = document.getElementById('char-start-btn');
-  if (startBtn && isKadroReady) {
-    startBtn.addEventListener('click', () => {
-      sfx.playFanfare();
-      // Set baseline scores and persist all changes
-      state.playerCount = currentlyActiveCount;
-      state.players.forEach(p => {
-        state.scores[p.id] = 0;
-        p.score = 0;
-        if (p.active) {
-          savePlayerPersistentData(p);
-        }
-      });
-      setScreen('gamesHub');
-    });
-  }
 }
 
 // ==========================================
 // 3. GAMES HUB (Oyun Arenası Seçim Ekranı)
 // ==========================================
-const GAME_DETAILS: { [key: string]: { name: string; emoji: string; color: string } } = {
-  balloonGame: { name: 'Balon Şişirme', emoji: '🎈', color: 'bg-[#FF6B6B]' },
-  memoryGame: { name: 'Hafıza Kartları', emoji: '🧩', color: 'bg-[#A29BFE]' },
-  colorTrapGame: { name: 'Renk Tuzağı', emoji: '🎨', color: 'bg-[#FDCB6E]' },
-  clickDerbyGame: { name: 'Işık Avcısı', emoji: '⚡', color: 'bg-[#55EFC4]' },
-  raceGame: { name: 'Sevimli Koşu', emoji: '🏃', color: 'bg-[#FCA311]' },
-  bombGame: { name: 'Bomba İmha', emoji: '💣', color: 'bg-[#FF7675]' },
-  mathDashGame: { name: 'Sayı Avcısı', emoji: '🔢', color: 'bg-[#74B9FF]' }
+const GAME_DETAILS: { [key: string]: { name: string; emoji: string; color: string; desc: string } } = {
+  balloonGame: { name: 'Balon Şişirme', emoji: '🎈', color: 'bg-[#FF6B6B]', desc: 'Seri tuşlayıp balonu patlat!' },
+  memoryGame: { name: 'Hafıza Kartları', emoji: '🧩', color: 'bg-[#A29BFE]', desc: 'Eşleşen kart çiftlerini bul!' },
+  colorTrapGame: { name: 'Renk Tuzağı', emoji: '🎨', color: 'bg-[#FDCB6E]', desc: 'Renk ve metin eşleşirse bas!' },
+  clickDerbyGame: { name: 'Işık Avcısı', emoji: '⚡', color: 'bg-[#55EFC4]', desc: 'Yeşil lamba yanar yanmaz tıkla!' },
+  raceGame: { name: 'Sevimli Koşu', emoji: '🏃', color: 'bg-[#FCA311]', desc: 'Muzlardan kaç, hızlanıp yarışı kazan!' },
+  bombGame: { name: 'Bomba İmha', emoji: '💣', color: 'bg-[#FF7675]', desc: 'Patlama gerçekleşmeden kabloyu kes!' },
+  mathDashGame: { name: 'Sayı Avcısı', emoji: '🔢', color: 'bg-[#74B9FF]', desc: 'Belirtilen hedef sayıyı ilk yakalayan ol!' }
 };
 
 function renderGamesHub() {
@@ -2831,59 +2942,103 @@ function renderGamesHub() {
   }
 
   const container = document.createElement('div');
-  container.className = "w-full max-w-5xl relative z-10 flex flex-col space-y-5 animate-fade-in";
+  container.className = "w-full max-w-6xl relative z-10 flex flex-col animate-fade-in text-black select-none gap-4 my-auto";
 
-  // Compact Top Navigation Bar (replaces the entire live score panel)
+  // Side-by-side Grid Wrapper for Portrait vs Landscape
+  const hubGrid = document.createElement('div');
+  hubGrid.className = "grid grid-cols-1 lg:grid-cols-12 gap-5 w-full items-stretch";
+
+  // Left Column: Navigation controls, Playlist plan & Eliminasyon Status
+  const leftCol = document.createElement('div');
+  leftCol.className = "lg:col-span-4 flex flex-col gap-4";
+
+  // Navigation Panel (Back, Shop, Gifts, Guides)
   const navCard = document.createElement('div');
-  navCard.className = "w-full bg-white border-4 border-black p-3 flex flex-wrap items-center justify-between gap-3 shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] text-black relative";
+  navCard.className = "bg-white border-4 border-black p-4 flex flex-col gap-3.5 shadow-[5px_5px_0_rgba(0,0,0,1)]";
   
-  let scoreHTML = `
-    <!-- Brand / Title -->
-    <div class="flex items-center gap-2 select-none">
-      <button id="hub-back-btn" class="px-3 py-1 bg-black text-white hover:bg-red-605 border-2 border-black text-[10px] font-black uppercase cursor-pointer shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-[0.5px] active:translate-y-[0.5px] active:shadow-none flex items-center transition-colors">
-        ⬅ GİRİŞE DÖN
+  navCard.innerHTML = `
+    <div class="flex items-center justify-between border-b pb-2.5 border-black/10 select-none">
+      <h3 class="text-xs font-display font-black tracking-wider uppercase text-black">⚡ ARENA KONTROLÜ</h3>
+      <button id="hub-back-btn" class="px-2.5 py-1 bg-black text-white hover:bg-neutral-805 border-2 border-black text-[9px] font-black uppercase cursor-pointer shadow-[1.5px_1.5px_0_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-colors">
+        ⬅ GİRİŞ
       </button>
-      <span class="text-[10px] font-black uppercase font-display hidden sm:inline-block tracking-wider text-black/55">⚡ ARENA KONTROLÜ</span>
     </div>
-
-    <!-- Quick action buttons -->
-    <div class="flex flex-wrap gap-2 justify-end">
-      <button id="hub-shop-btn" class="text-[10px] font-black uppercase bg-[#FDCB6E] border-2 border-black py-1 px-3 shadow-[2.5px_2.5px_0px_0px_rgba(0,0,0,1)] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none hover:bg-black hover:text-[#FDCB6E] cursor-pointer flex items-center gap-1 transition-all">
-        🛍️ MAĞAZA & GİYSİLER
+    <div class="grid grid-cols-4 gap-1.5">
+      <button id="hub-shop-btn" class="text-[9.5px] font-black uppercase bg-[#FDCB6E] border-2 border-black py-1.5 px-1 shadow-[2px_2px_0_rgba(0,0,0,1)] active:translate-x-[0.5px] active:translate-y-[0.5px] active:shadow-none hover:bg-black hover:text-[#FDCB6E] cursor-pointer flex flex-col items-center justify-center gap-1 transition-all rounded">
+        <span>🛍️</span>
+        <span class="truncate w-full text-center">MAĞAZA</span>
       </button>
-      <button id="hub-daily-btn" class="text-[10px] font-black uppercase bg-[#4ECDC4] border-2 border-black py-1 px-3 shadow-[2.5px_2.5px_0px_0px_rgba(0,0,0,1)] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none hover:bg-black hover:text-white cursor-pointer flex items-center gap-1 transition-all relative">
-        <span>🎁 GÜNLÜK HEDİYE</span>
-        ${hasAnyUnclaimedBonus() ? `<span class="absolute -top-1 -right-1 w-2.5 h-2.5 bg-yellow-400 border-2 border-black rounded-full animate-ping"></span><span class="absolute -top-1 -right-1 w-2.5 h-2.5 bg-yellow-400 border-2 border-black rounded-full"></span>` : ''}
+      <button id="hub-achievements-btn" class="text-[9.5px] font-black uppercase bg-[#FF7675] border-2 border-black py-1.5 px-1 shadow-[2px_2px_0_rgba(0,0,0,1)] active:translate-x-[0.5px] active:translate-y-[0.5px] active:shadow-none hover:bg-black hover:text-white cursor-pointer flex flex-col items-center justify-center gap-1 transition-all rounded">
+        <span>🏆</span>
+        <span class="truncate w-full text-center">ROZET</span>
       </button>
-      <button id="hub-how-btn" class="text-[10px] font-black uppercase bg-[#FFD2E8] border-2 border-black py-1 px-3 shadow-[2.5px_2.5px_0px_0px_rgba(0,0,0,1)] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none hover:bg-black hover:text-white cursor-pointer flex items-center gap-1 transition-all">
-        📖 NASIL OYNANIR?
+      <button id="hub-daily-btn" class="text-[9.5px] font-black uppercase bg-[#4ECDC4] border-2 border-black py-1.5 px-0.5 shadow-[2px_2px_0_rgba(0,0,0,1)] active:translate-x-[0.5px] active:translate-y-[0.5px] active:shadow-none hover:bg-black hover:text-white cursor-pointer flex flex-col items-center justify-center gap-1 transition-all relative rounded">
+        <span>🎁</span>
+        <span class="truncate w-full text-center">HEDİYE</span>
+        ${hasAnyUnclaimedBonus() ? `<span class="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 border border-black rounded-full animate-ping"></span><span class="absolute top-1.5 right-1.5 w-2 h-2 bg-red-400 border border-black rounded-full"></span>` : ''}
+      </button>
+      <button id="hub-how-btn" class="text-[9.5px] font-black uppercase bg-[#FFD2E8] border-2 border-black py-1.5 px-1 shadow-[2px_2px_0_rgba(0,0,0,1)] active:translate-x-[0.5px] active:translate-y-[0.5px] active:shadow-none hover:bg-black hover:text-white cursor-pointer flex flex-col items-center justify-center gap-1 transition-all rounded">
+        <span>📖</span>
+        <span class="truncate w-full text-center">REHBER</span>
       </button>
     </div>
   `;
-  navCard.innerHTML = scoreHTML;
+  leftCol.appendChild(navCard);
 
-  // Dynamic Playlist Planner Dashboard
+  // Elimination Banner (if elimination mode is active)
+  if (state.isEliminationMode) {
+    const elimBanner = document.createElement('div');
+    elimBanner.className = "bg-[#FFF0F2] border-4 border-[#FF7675] p-3 text-black shadow-[5px_5px_0_rgba(0,0,0,1)] select-none";
+    elimBanner.innerHTML = `
+      <div class="flex items-center gap-1 mb-2 pb-1.5 border-b-2 border-[#FF7675]/30">
+        <span class="text-base shrink-0 animate-bounce-short">🔥</span>
+        <h4 class="text-[10px] font-display font-black uppercase text-black leading-none">NOCAKOUT DURUMU</h4>
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        ${state.players.filter(p => p.active).map(p => {
+          if (p.isEliminated) {
+            return `
+              <div class="flex items-center justify-between p-1.5 bg-neutral-100 border-2 border-neutral-400 opacity-55 text-neutral-500 line-through">
+                <span class="font-bold text-[9px] truncate">💀 ${p.name}</span>
+                <span class="font-mono text-[7px] bg-red-100 text-red-700 px-1 py-0.5 rounded border border-red-200">ELENDİ</span>
+              </div>
+            `;
+          } else {
+            return `
+              <div class="flex items-center justify-between p-1.5 bg-white border-2 border-black shadow-[1.5px_1.5px_0_rgba(0,0,0,1)]">
+                <span class="font-extrabold text-[9px] truncate text-black">🔋 ${p.name}</span>
+                <span class="font-mono text-[7px] bg-[#55EFC4] text-black px-1 border border-black font-extrabold animate-pulse rounded">HAZIR</span>
+              </div>
+            `;
+          }
+        }).join('')}
+      </div>
+    `;
+    leftCol.appendChild(elimBanner);
+  }
+
+  // Playlist Planner Widget
   const playlistPlanner = document.createElement('div');
-  playlistPlanner.className = "w-full bg-[#EBFBEE] border-2 border-black p-2 sm:p-2.5 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] text-black flex flex-col space-y-2";
+  playlistPlanner.className = "bg-[#EBFBEE] border-4 border-black p-4 shadow-[5px_5px_0_rgba(0,0,0,1)] flex flex-col gap-2.5";
   
   const currentPlaylist = state.gamePlaylist || [];
   let playlistItemsHTML = '';
   if (currentPlaylist.length === 0) {
     playlistItemsHTML = `
-      <div class="flex-1 border border-dashed border-black/25 p-1.5 text-center text-[10.5px] font-bold text-black/60 select-none bg-emerald-50/40">
-        📋 Liste Boş. Alttaki butonlardan "➕ Ekle" ile oyun ekleyin veya hızlı sıra yükleyin!
+      <div class="flex-1 border-2 border-dashed border-black/25 p-2 bg-emerald-50/40 text-center text-[10px] font-bold text-black/60 select-none rounded">
+        📋 Sıralı turnuva listesi boş. Sağ panelden "➕ Ekle" butonuna basarak listenizi hazırlayın!
       </div>
     `;
   } else {
     playlistItemsHTML = `
-      <div class="flex flex-wrap items-center gap-1 flex-1 p-1 bg-emerald-50/70 border border-black min-h-[30px]">
+      <div class="flex flex-wrap items-center gap-1.5 p-1.5 bg-emerald-50/70 border-2 border-black max-h-[120px] overflow-y-auto">
         ${currentPlaylist.map((gType, idx) => {
           const det = GAME_DETAILS[gType];
           if (!det) return '';
           return `
-            <div class="flex items-center gap-1 ${det.color} border border-black py-0.5 px-1.5 shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] text-[9px] font-black uppercase text-black">
+            <div class="flex items-center gap-1 ${det.color} border-2 border-black py-0.5 px-1.5 shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] text-[8px] font-black uppercase text-black rounded">
               <span>${idx + 1}. ${det.emoji} ${det.name}</span>
-              <button data-remove-idx="${idx}" class="ml-1 px-0.5 text-red-600 hover:bg-black hover:text-white rounded transition-colors select-none font-bold text-[9px]" title="Kaldır">✕</button>
+              <button data-remove-idx="${idx}" class="ml-1 px-1 bg-white hover:bg-black hover:text-white border border-black transition-colors select-none font-black text-[8px]" title="Kaldır">✕</button>
             </div>
             ${idx < currentPlaylist.length - 1 ? '<span class="text-black font-black text-[9px]">➔</span>' : ''}
           `;
@@ -2893,287 +3048,102 @@ function renderGamesHub() {
   }
 
   playlistPlanner.innerHTML = `
-    <div class="flex items-center justify-between gap-1.5 border-b border-black/20 pb-1">
-      <div>
-        <h4 class="text-xs font-black text-black uppercase leading-none font-display">Sıralı Turnuva Planlayıcı</h4>
-      </div>
+    <div class="flex items-center justify-between border-b pb-1.5 border-black/10 select-none">
+      <h4 class="text-xs font-black text-black uppercase font-display">Turnuva Listesi</h4>
       <div class="flex items-center gap-1">
-        <button id="playlist-preset-btn" class="text-[8.5px] font-black uppercase bg-[#FDCB6E] hover:bg-black hover:text-[#FDCB6E] border border-black px-1.5 py-0.5 shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] cursor-pointer transition-all">
-          ⚡ Hızlı Sıra
+        <button id="playlist-preset-btn" class="text-[8.5px] font-black uppercase bg-[#FDCB6E] hover:bg-black hover:text-[#FDCB6E] border-2 border-black px-1.5 py-0.5 shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] cursor-pointer transition-all">
+          ⚡ Tümü
         </button>
-        <button id="playlist-clear-btn" class="text-[8.5px] font-black uppercase bg-red-50 hover:bg-red-600 hover:text-white border border-black px-1.5 py-0.5 shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] cursor-pointer transition-all">
-          🗑️ Temizle
+        <button id="playlist-clear-btn" class="text-[8.5px] font-black uppercase bg-red-50 hover:bg-red-600 hover:text-white border-2 border-black px-1.5 py-0.5 shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] cursor-pointer transition-all">
+          🗑️ Sil
         </button>
       </div>
     </div>
     
-    <div class="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2">
+    <div class="flex flex-col gap-2">
       ${playlistItemsHTML}
-      <button id="playlist-start-btn" class="py-1.5 px-3 shrink-0 bg-black text-white hover:bg-[#4ECDC4] hover:text-black border border-black font-black tracking-wide text-[10px] uppercase cursor-pointer shadow-[2px_2px_0_rgba(0,0,0,1)] transition-colors active:translate-x-[0.5px] active:translate-y-[0.5px] active:shadow-none flex items-center justify-center gap-1 ${currentPlaylist.length === 0 ? 'opacity-40 pointer-events-none' : ''}">
-        🚀 Turnuvayı Başlat (${currentPlaylist.length} Oyun)
+      <button id="playlist-start-btn" class="w-full py-2.5 bg-black text-white hover:bg-[#4ECDC4] hover:text-black border-4 border-black font-black tracking-wide text-[10px] uppercase cursor-pointer shadow-[3px_3px_0_rgba(0,0,0,1)] transition-colors active:translate-x-[0.5px] active:translate-y-[0.5px] active:shadow-none flex items-center justify-center gap-1.5 ${currentPlaylist.length === 0 ? 'opacity-40 pointer-events-none' : ''}">
+        🚀 TURNUVAYI BAŞLAT (${currentPlaylist.length} Oyun)
       </button>
     </div>
   `;
+  leftCol.appendChild(playlistPlanner);
 
-  // Append Navigation Header first, then the Playlist planner
-  container.appendChild(navCard);
-
-  // If elimination mode is active, show the Tournament Standing Banner
-  if (state.isEliminationMode) {
-    const elimBanner = document.createElement('div');
-    elimBanner.className = "w-full";
-    elimBanner.innerHTML = `
-      <div class="w-full bg-[#FFF0F2] border-4 border-[#FF7675] p-3 text-black shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] relative select-none">
-        <div class="flex items-center gap-2 mb-2 pb-1.5 border-b-2 border-[#FF7675]/35 justify-between flex-wrap">
-          <div class="flex items-center gap-1.5">
-            <span class="text-xl animate-pulse">🔥</span>
-            <div>
-              <h4 class="text-xs font-display font-black uppercase text-black leading-none">ELEMELİ TURNUVA STATÜSÜ</h4>
-            </div>
-          </div>
-          <span class="text-[8.5px] font-black uppercase bg-[#FF7675] text-white px-2 py-0.5 border-2 border-black shadow-[1.5px_1.5px_0_rgba(0,0,0,1)]">KÜRSÜ DURUMU</span>
-        </div>
-        
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-          ${state.players.filter(p => p.active).map(p => {
-            if (p.isEliminated) {
-              return `
-                <div class="flex items-center justify-between p-2 bg-neutral-100 border-2 border-neutral-400 opacity-55 text-neutral-500 line-through">
-                  <div class="flex items-center gap-1.5 min-w-0">
-                    <span class="text-xs shrink-0 select-none">💀</span>
-                    <span class="font-bold text-[10px] truncate">${p.name}</span>
-                  </div>
-                  <span class="font-mono text-[8px] bg-red-100 text-red-700 px-1 py-0.5 border border-red-300 font-extrabold tracking-wide rounded">ELENDİ</span>
-                </div>
-              `;
-            } else {
-              return `
-                <div class="flex items-center justify-between p-2 bg-white border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
-                  <div class="flex items-center gap-1.5 min-w-0">
-                    <span class="text-xs shrink-0 select-none">🔋</span>
-                    <span class="font-extrabold text-[10.5px] truncate text-black">${p.name}</span>
-                  </div>
-                  <span class="font-mono text-[8.5px] bg-[#55EFC4] text-black px-1.5 py-0.5 border border-black font-extrabold flex items-center gap-0.5 shadow-[0.5px_0.5px_0_rgba(0,0,0,1)] animate-pulse rounded">AKTİF</span>
-                </div>
-              `;
-            }
-          }).join('')}
-        </div>
-      </div>
-    `;
-    container.appendChild(elimBanner);
-  }
-
-  container.appendChild(playlistPlanner);
-
-  // Game Selector Section Title — SUPER COMPACT
-  const selectHeader = document.createElement('div');
-  selectHeader.className = "text-left pl-1 mt-1 shrink-0 select-none";
-  selectHeader.innerHTML = `
-    <h3 class="text-xs sm:text-sm font-display font-black text-black uppercase tracking-wider flex items-center gap-1.5">🎮 MİNİ OYUN SEÇİMİ</h3>
-    <p class="text-black/60 text-[10px] font-bold">Hızlıca tek oyun başlat veya turnuva playlistine sırayla ekle!</p>
-  `;
-  container.appendChild(selectHeader);
-
-  // List of Available Games Card Grid — 2 columns on mobile, 3 on tablet, 5 on desktop
-  const gamesGrid = document.createElement('div');
-  gamesGrid.className = "grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2.5 w-full";
-
-  // Game 1: Memory Game — COMPACT
-  const game1 = document.createElement('div');
-  game1.className = "bg-white border-2 border-black p-3 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] flex flex-col justify-between space-y-2.5 group transition-all duration-350 hover:-translate-y-0.5 hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]";
-  game1.innerHTML = `
-    <div class="space-y-1.5 text-left text-black flex items-center gap-2">
-      <div class="w-7 h-7 shrink-0 rounded-none bg-[#A29BFE] border border-black flex items-center justify-center text-sm shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]">
-        🧩
-      </div>
-      <div class="min-w-0 flex-1">
-        <h4 class="text-xs font-display font-black text-black truncate leading-tight">Hafıza Kartları</h4>
-        <p class="text-black/60 text-[9.5px] font-bold truncate leading-tight mt-0.5">
-          Kart çiftlerini eşleştir!
-        </p>
-      </div>
-    </div>
-    <div class="flex gap-1 w-full pt-1 border-t border-dashed border-black/10">
-      <button id="play-now-memory" class="flex-1 py-1 bg-black hover:bg-[#A29BFE] text-white hover:text-black border border-black font-black text-[10px] uppercase transition-colors cursor-pointer text-center">
-        ▶ OYNA
-      </button>
-      <button id="add-queue-memory" class="px-2 py-1 bg-[#4ECDC4] hover:bg-black hover:text-white border border-black text-black font-black text-[10px] uppercase transition-colors cursor-pointer shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]" title="Ortak Listeye Ekle">
-        ➕ Ekle
-      </button>
-    </div>
-  `;
-  gamesGrid.appendChild(game1);
-
-  // Game 2: Balloon Pop — COMPACT
-  const game2 = document.createElement('div');
-  game2.className = "bg-white border-2 border-black p-3 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] flex flex-col justify-between space-y-2.5 group transition-all duration-350 hover:-translate-y-0.5 hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]";
-  game2.innerHTML = `
-    <div class="space-y-1.5 text-left text-black flex items-center gap-2">
-      <div class="w-7 h-7 shrink-0 rounded-none bg-[#FF6B6B] border border-black flex items-center justify-center text-sm shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]">
-        🎈
-      </div>
-      <div class="min-w-0 flex-1">
-        <h4 class="text-xs font-display font-black text-black truncate leading-tight">Balon Şişirme</h4>
-        <p class="text-black/60 text-[9.5px] font-bold truncate leading-tight mt-0.5">
-          Seri tuşlayıp balonu patlat!
-        </p>
-      </div>
-    </div>
-    <div class="flex gap-1 w-full pt-1 border-t border-dashed border-black/10">
-      <button id="play-now-balloon" class="flex-1 py-1 bg-black hover:bg-[#FF6B6B] text-white hover:text-black border border-black font-black text-[10px] uppercase transition-colors cursor-pointer text-center">
-        ▶ OYNA
-      </button>
-      <button id="add-queue-balloon" class="px-2 py-1 bg-[#4ECDC4] hover:bg-black hover:text-white border border-black text-black font-black text-[10px] uppercase transition-colors cursor-pointer shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]" title="Ortak Listeye Ekle">
-        ➕ Ekle
-      </button>
-    </div>
-  `;
-  gamesGrid.appendChild(game2);
-
-  // Game 3: Color Trap — COMPACT
-  const game3 = document.createElement('div');
-  game3.className = "bg-white border-2 border-black p-3 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] flex flex-col justify-between space-y-2.5 group transition-all duration-350 hover:-translate-y-0.5 hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]";
-  game3.innerHTML = `
-    <div class="space-y-1.5 text-left text-black flex items-center gap-2">
-      <div class="w-7 h-7 shrink-0 rounded-none bg-[#FDCB6E] border border-black flex items-center justify-center text-sm shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]">
-        🎨
-      </div>
-      <div class="min-w-0 flex-1">
-        <h4 class="text-xs font-display font-black text-black truncate leading-tight">Renk Tuzağı</h4>
-        <p class="text-black/60 text-[9.5px] font-bold truncate leading-tight mt-0.5">
-          Kelime ve yazı rengi aynıysa bas!
-        </p>
-      </div>
-    </div>
-    <div class="flex gap-1 w-full pt-1 border-t border-dashed border-black/10">
-      <button id="play-now-colorTrap" class="flex-1 py-1 bg-black hover:bg-[#FDCB6E] text-white hover:text-black border border-black font-black text-[10px] uppercase transition-colors cursor-pointer text-center">
-        ▶ OYNA
-      </button>
-      <button id="add-queue-colorTrap" class="px-2 py-1 bg-[#4ECDC4] hover:bg-black hover:text-white border border-black text-black font-black text-[10px] uppercase transition-colors cursor-pointer shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]" title="Ortak Listeye Ekle">
-        ➕ Ekle
-      </button>
-    </div>
-  `;
-  gamesGrid.appendChild(game3);
-
-  // Game 4: Light Hunter — COMPACT
-  const game4 = document.createElement('div');
-  game4.className = "bg-white border-2 border-black p-3 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] flex flex-col justify-between space-y-2.5 group transition-all duration-350 hover:-translate-y-0.5 hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]";
-  game4.innerHTML = `
-    <div class="space-y-1.5 text-left text-black flex items-center gap-2">
-      <div class="w-7 h-7 shrink-0 rounded-none bg-[#55EFC4] border border-black flex items-center justify-center text-sm shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]">
-        ⚡
-      </div>
-      <div class="min-w-0 flex-1">
-        <h4 class="text-xs font-display font-black text-black truncate leading-tight">Işık Avcısı</h4>
-        <p class="text-black/60 text-[9.5px] font-bold truncate leading-tight mt-0.5">
-          Lamba yeşil olduğunda tıkla!
-        </p>
-      </div>
-    </div>
-    <div class="flex gap-1 w-full pt-1 border-t border-dashed border-black/10">
-      <button id="play-now-clickDerby" class="flex-1 py-1 bg-black hover:bg-[#55EFC4] text-white hover:text-black border border-black font-black text-[10px] uppercase transition-colors cursor-pointer text-center">
-        ▶ OYNA
-      </button>
-      <button id="add-queue-clickDerby" class="px-2 py-1 bg-[#4ECDC4] hover:bg-black hover:text-white border border-black text-black font-black text-[10px] uppercase transition-colors cursor-pointer shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]" title="Oyunu Listeye Ekle">
-        ➕ Ekle
-      </button>
-    </div>
-  `;
-  gamesGrid.appendChild(game4);
-
-  // Game 5: Sevimli Koşu — COMPACT
-  const game5 = document.createElement('div');
-  game5.className = "bg-white border-2 border-black p-3 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] flex flex-col justify-between space-y-2.5 group transition-all duration-350 hover:-translate-y-0.5 hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]";
-  game5.innerHTML = `
-    <div class="space-y-1.5 text-left text-black flex items-center gap-2">
-      <div class="w-7 h-7 shrink-0 rounded-none bg-[#FCA311] border border-black flex items-center justify-center text-sm shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]">
-        🏃
-      </div>
-      <div class="min-w-0 flex-1">
-        <h4 class="text-xs font-display font-black text-black truncate leading-tight">Sevimli Koşu</h4>
-        <p class="text-black/60 text-[9.5px] font-bold truncate leading-tight mt-0.5">
-          Muzlardan kaçıp finişe koş!
-        </p>
-      </div>
-    </div>
-    <div class="flex gap-1 w-full pt-1 border-t border-dashed border-black/10">
-      <button id="play-now-raceGame" class="flex-1 py-1 bg-black hover:bg-[#FCA311] text-white hover:text-black border border-black font-black text-[10px] uppercase transition-colors cursor-pointer text-center">
-        ▶ OYNA
-      </button>
-      <button id="add-queue-raceGame" class="px-2 py-1 bg-[#4ECDC4] hover:bg-black hover:text-white border border-black text-black font-black text-[10px] uppercase transition-colors cursor-pointer shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]" title="Oyunu Listeye Ekle">
-        ➕ Ekle
-      </button>
-    </div>
-  `;
-  gamesGrid.appendChild(game5);
-
-  // Game 6: Bomba İmha — COMPACT
-  const game6 = document.createElement('div');
-  game6.className = "bg-white border-2 border-black p-3 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] flex flex-col justify-between space-y-2.5 group transition-all duration-350 hover:-translate-y-0.5 hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]";
-  game6.innerHTML = `
-    <div class="space-y-1.5 text-left text-black flex items-center gap-2">
-      <div class="w-7 h-7 shrink-0 rounded-none bg-[#FF7675] border border-black flex items-center justify-center text-sm shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]">
-        💣
-      </div>
-      <div class="min-w-0 flex-1">
-        <h4 class="text-xs font-display font-black text-black truncate leading-tight">Bomba İmha</h4>
-        <p class="text-black/60 text-[9.5px] font-bold truncate leading-tight mt-0.5">
-          Patlamadan önce kabloyu kes!
-        </p>
-      </div>
-    </div>
-    <div class="flex gap-1 w-full pt-1 border-t border-dashed border-black/10">
-      <button id="play-now-bomb" class="flex-1 py-1 bg-black hover:bg-[#FF7675] text-white hover:text-black border border-black font-black text-[10px] uppercase transition-colors cursor-pointer text-center">
-        ▶ OYNA
-      </button>
-      <button id="add-queue-bomb" class="px-2 py-1 bg-[#4ECDC4] hover:bg-black hover:text-white border border-black text-black font-black text-[10px] uppercase transition-colors cursor-pointer shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]" title="Oyunu Listeye Ekle">
-        ➕ Ekle
-      </button>
-    </div>
-  `;
-  gamesGrid.appendChild(game6);
-
-  // Game 7: Sayı Avcısı — COMPACT
-  const game7 = document.createElement('div');
-  game7.className = "bg-white border-2 border-black p-3 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] flex flex-col justify-between space-y-2.5 group transition-all duration-350 hover:-translate-y-0.5 hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]";
-  game7.innerHTML = `
-    <div class="space-y-1.5 text-left text-black flex items-center gap-2">
-      <div class="w-7 h-7 shrink-0 rounded-none bg-[#74B9FF] border border-black flex items-center justify-center text-sm shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]">
-        🔢
-      </div>
-      <div class="min-w-0 flex-1">
-        <h4 class="text-xs font-display font-black text-black truncate leading-tight">Sayı Avcısı</h4>
-        <p class="text-black/60 text-[9.5px] font-bold truncate leading-tight mt-0.5">
-          Hedefe uyan sayı çıkınca bas!
-        </p>
-      </div>
-    </div>
-    <div class="flex gap-1 w-full pt-1 border-t border-dashed border-black/10">
-      <button id="play-now-mathDash" class="flex-1 py-1 bg-black hover:bg-[#74B9FF] text-white hover:text-black border border-black font-black text-[10px] uppercase transition-colors cursor-pointer text-center">
-        ▶ OYNA
-      </button>
-      <button id="add-queue-mathDash" class="px-2 py-1 bg-[#4ECDC4] hover:bg-black hover:text-white border border-black text-black font-black text-[10px] uppercase transition-colors cursor-pointer shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]" title="Oyunu Listeye Ekle">
-        ➕ Ekle
-      </button>
-    </div>
-  `;
-  gamesGrid.appendChild(game7);
-
-  container.appendChild(gamesGrid);
-
-  // Big End/Result button
+  // Big End/Result button as the footer of left column (saves screen height!)
   const endDiv = document.createElement('div');
-  endDiv.className = "flex justify-center w-full pt-2";
+  endDiv.className = "w-full";
   endDiv.innerHTML = `
-    <button id="end-party-btn" class="px-8 py-3.5 bg-[#FF6B6B] text-black border-4 border-black font-black font-sans tracking-widest text-xs uppercase rounded-none cursor-pointer hover:bg-black hover:text-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all duration-200 active:translate-x-0.5 active:translate-y-0.5 active:shadow-[1.5px_1.5px_0px_0px_rgba(0,0,0,1)]">
-      🏆 TURNUVAYI SONLANDIR VE KAZANANI GÖR!
+    <button id="end-party-btn" class="w-full py-2.5 bg-[#FF6B6B] text-black border-4 border-black font-black font-sans tracking-widest text-[10px] uppercase cursor-pointer hover:bg-black hover:text-white shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] transition-all duration-200 active:translate-x-0.5 active:translate-y-0.5 active:shadow-none rounded">
+      🏆 TURNUVAYI BİTİR VE SKORLARI GÖR!
     </button>
   `;
-  container.appendChild(endDiv);
+  leftCol.appendChild(endDiv);
+
+  hubGrid.appendChild(leftCol);
+
+  // Right Column: Selection panel of the 7 mini-games
+  const rightCol = document.createElement('div');
+  rightCol.className = "lg:col-span-8 flex flex-col gap-3";
+
+  // Section Title inside right column
+  const selectHeader = document.createElement('div');
+  selectHeader.className = "bg-black text-white p-3 border-4 border-black shadow-[3px_3px_0_rgba(0,0,0,1)] flex items-center justify-between";
+  selectHeader.innerHTML = `
+    <h3 class="text-xs sm:text-xs font-display font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+      🎮 MİNİ OYUN SEÇİM ARENASI
+    </h3>
+    <span class="text-[8.5px] font-black uppercase text-emerald-400 font-mono">7 AKTİF MOD</span>
+  `;
+  rightCol.appendChild(selectHeader);
+
+  // Grid of mini-games (2 columns in tiny, 3 standard landscape, scrollable if needed)
+  const gamesGrid = document.createElement('div');
+  gamesGrid.className = "grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-3 gap-3 w-full max-h-[390px] overflow-y-auto pr-1";
+
+  const keyToId: { [key: string]: string } = {
+    memoryGame: 'memory',
+    balloonGame: 'balloon',
+    colorTrapGame: 'colorTrap',
+    clickDerbyGame: 'clickDerby',
+    raceGame: 'raceGame',
+    bombGame: 'bomb',
+    mathDashGame: 'mathDash'
+  };
+
+  Object.entries(GAME_DETAILS).forEach(([gKey, gDet]) => {
+    const actId = keyToId[gKey];
+    const card = document.createElement('div');
+    card.className = "bg-white border-4 border-black p-3 shadow-[4px_4px_0_rgba(0,0,0,1)] flex flex-col justify-between gap-3 group transition-all hover:bg-zinc-50 rounded-lg relative overflow-hidden";
+    card.innerHTML = `
+      <div class="flex items-start gap-2 text-left">
+        <div class="w-7 h-7 sm:w-8 sm:h-8 shrink-0 rounded border-2 border-black flex items-center justify-center text-base sm:text-lg ${gDet.color} shadow-[1.5px_1.5px_0_rgba(0,0,0,1)] select-none">
+          ${gDet.emoji}
+        </div>
+        <div class="min-w-0 flex-1">
+          <h4 class="text-[10px] sm:text-[11px] font-display font-black text-black uppercase truncate leading-none">${gDet.name}</h4>
+          <p class="text-black/60 text-[8.5px] leading-tight font-bold mt-1">
+            ${gDet.desc}
+          </p>
+        </div>
+      </div>
+      <div class="flex gap-1 pt-1.5 border-t border-dashed border-black/15">
+        <button id="play-now-${actId}" class="flex-1 py-1.5 bg-black hover:bg-zinc-850 text-white border-2 border-black font-black text-[9px] uppercase transition-colors cursor-pointer text-center rounded shadow-[1px_1px_0_rgba(0,0,0,1)] whitespace-nowrap">
+          ▶ OYNA
+        </button>
+        <button id="add-queue-${actId}" class="px-2 py-1.5 bg-[#4ECDC4] hover:bg-black hover:text-white border-2 border-black text-black font-black text-[9px] uppercase transition-colors cursor-pointer shadow-[1px_1px_0_rgba(0,0,0,1)] rounded whitespace-nowrap" title="Sıralı Turnuvaya Ekle">
+          ➕ EKLE
+        </button>
+      </div>
+    `;
+    gamesGrid.appendChild(card);
+  });
+
+  rightCol.appendChild(gamesGrid);
+  hubGrid.appendChild(rightCol);
+  container.appendChild(hubGrid);
   appRoot.appendChild(container);
 
+  // Wire up Left Column events
   document.getElementById('end-party-btn')?.addEventListener('click', () => {
     sfx.playFanfare();
     setScreen('gameOver');
@@ -3189,6 +3159,11 @@ function renderGamesHub() {
     setScreen('costumeShop');
   });
 
+  document.getElementById('hub-achievements-btn')?.addEventListener('click', () => {
+    sfx.playTick();
+    setScreen('achievements');
+  });
+
   document.getElementById('hub-daily-btn')?.addEventListener('click', () => {
     sfx.playTick();
     renderDailyBonusModal();
@@ -3199,88 +3174,13 @@ function renderGamesHub() {
     renderHowToPlayModal('general');
   });
 
-  // Hot-starts for individual games immediately
-  document.getElementById('play-now-memory')?.addEventListener('click', () => {
-    state.playlistActive = false; // Disable queue if playing individual
-    setScreen('memoryGame');
-  });
-  document.getElementById('play-now-balloon')?.addEventListener('click', () => {
-    state.playlistActive = false; // Disable queue if playing individual
-    setScreen('balloonGame');
-  });
-  document.getElementById('play-now-colorTrap')?.addEventListener('click', () => {
-    state.playlistActive = false; // Disable queue if playing individual
-    setScreen('colorTrapGame');
-  });
-  document.getElementById('play-now-clickDerby')?.addEventListener('click', () => {
-    state.playlistActive = false; // Disable queue if playing individual
-    setScreen('clickDerbyGame');
-  });
-  document.getElementById('play-now-raceGame')?.addEventListener('click', () => {
-    state.playlistActive = false; // Disable queue if playing individual
-    setScreen('raceGame');
-  });
-  document.getElementById('play-now-bomb')?.addEventListener('click', () => {
-    state.playlistActive = false; // Disable queue if playing individual
-    setScreen('bombGame');
-  });
-  document.getElementById('play-now-mathDash')?.addEventListener('click', () => {
-    state.playlistActive = false; // Disable queue if playing individual
-    setScreen('mathDashGame');
-  });
-
-  // Adding games to the tournament playlist
-  document.getElementById('add-queue-memory')?.addEventListener('click', () => {
-    if (!state.gamePlaylist) state.gamePlaylist = [];
-    state.gamePlaylist.push('memoryGame');
-    sfx.playPowerUp();
-    setScreen('gamesHub');
-  });
-  document.getElementById('add-queue-balloon')?.addEventListener('click', () => {
-    if (!state.gamePlaylist) state.gamePlaylist = [];
-    state.gamePlaylist.push('balloonGame');
-    sfx.playPowerUp();
-    setScreen('gamesHub');
-  });
-  document.getElementById('add-queue-colorTrap')?.addEventListener('click', () => {
-    if (!state.gamePlaylist) state.gamePlaylist = [];
-    state.gamePlaylist.push('colorTrapGame');
-    sfx.playPowerUp();
-    setScreen('gamesHub');
-  });
-  document.getElementById('add-queue-clickDerby')?.addEventListener('click', () => {
-    if (!state.gamePlaylist) state.gamePlaylist = [];
-    state.gamePlaylist.push('clickDerbyGame');
-    sfx.playPowerUp();
-    setScreen('gamesHub');
-  });
-  document.getElementById('add-queue-raceGame')?.addEventListener('click', () => {
-    if (!state.gamePlaylist) state.gamePlaylist = [];
-    state.gamePlaylist.push('raceGame');
-    sfx.playPowerUp();
-    setScreen('gamesHub');
-  });
-  document.getElementById('add-queue-bomb')?.addEventListener('click', () => {
-    if (!state.gamePlaylist) state.gamePlaylist = [];
-    state.gamePlaylist.push('bombGame');
-    sfx.playPowerUp();
-    setScreen('gamesHub');
-  });
-  document.getElementById('add-queue-mathDash')?.addEventListener('click', () => {
-    if (!state.gamePlaylist) state.gamePlaylist = [];
-    state.gamePlaylist.push('mathDashGame');
-    sfx.playPowerUp();
-    setScreen('gamesHub');
-  });
-
-  // Preset loading
+  // Wire up Preset and queue manage actions
   document.getElementById('playlist-preset-btn')?.addEventListener('click', () => {
     state.gamePlaylist = ['balloonGame', 'memoryGame', 'colorTrapGame', 'clickDerbyGame', 'raceGame', 'bombGame', 'mathDashGame'];
     sfx.playPowerUp();
     setScreen('gamesHub');
   });
 
-  // Clear queue
   document.getElementById('playlist-clear-btn')?.addEventListener('click', () => {
     state.gamePlaylist = [];
     state.playlistActive = false;
@@ -3289,7 +3189,6 @@ function renderGamesHub() {
     setScreen('gamesHub');
   });
 
-  // Start selected tournament queue
   document.getElementById('playlist-start-btn')?.addEventListener('click', () => {
     if (state.gamePlaylist && state.gamePlaylist.length > 0) {
       state.playlistActive = true;
@@ -3299,7 +3198,24 @@ function renderGamesHub() {
     }
   });
 
-  // Remove individual items from row list
+  // Wire up individual game buttons and queues
+  Object.keys(keyToId).forEach((gKey) => {
+    const actId = keyToId[gKey];
+    
+    document.getElementById(`play-now-${actId}`)?.addEventListener('click', () => {
+      state.playlistActive = false;
+      setScreen(gKey as any);
+    });
+
+    document.getElementById(`add-queue-${actId}`)?.addEventListener('click', () => {
+      if (!state.gamePlaylist) state.gamePlaylist = [];
+      state.gamePlaylist.push(gKey as any);
+      sfx.playPowerUp();
+      setScreen('gamesHub');
+    });
+  });
+
+  // Remove individual items from list
   container.querySelectorAll('[data-remove-idx]').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -3340,7 +3256,7 @@ function renderBalloonGame() {
   endButtonContainer.className = "hidden w-full flex justify-center py-2 animate-fade-in";
 
   const container = document.createElement('div');
-  container.className = "w-full max-w-6xl relative z-10 flex flex-col h-[90vh] max-h-[850px] justify-between space-y-4 animate-fade-in select-none";
+  container.className = "w-full max-w-6xl relative z-10 flex flex-col h-[90vh] max-h-[850px] justify-between space-y-4 animate-fade-in select-none my-auto";
 
   // Top header block
   const header = document.createElement('div');
@@ -3674,9 +3590,6 @@ function renderBalloonGame() {
 // ==========================================
 // 5. MEMORY GAME (Hafıza Kartları)
 // ==========================================
-// ==========================================
-// 5. MEMORY GAME (Hafıza Kartları)
-// ==========================================
 const MEMORY_MODES = [
   {
     id: 'classic',
@@ -3705,7 +3618,7 @@ const MEMORY_MODES = [
       { display: '🐱', matchId: 1 }, { display: '🐱', matchId: 1 },
       { display: '🐶', matchId: 2 }, { display: '🐶', matchId: 2 },
       { display: '🦊', matchId: 3 }, { display: '🦊', matchId: 3 },
-      { display: 'Bear', matchId: 4 }, { display: '🐻', matchId: 4 }, // Just using correct elements
+      { display: '🐻', matchId: 4 }, { display: '🐻', matchId: 4 },
       { display: '🐼', matchId: 5 }, { display: '🐼', matchId: 5 },
       { display: '🐸', matchId: 6 }, { display: '🐸', matchId: 6 },
       { display: '🦁', matchId: 7 }, { display: '🦁', matchId: 7 },
@@ -3740,29 +3653,27 @@ const MEMORY_MODES = [
       { display: '4 x 2', matchId: 2 }, { display: '8', matchId: 2 },
       { display: '3 x 3', matchId: 3 }, { display: '9', matchId: 3 },
       { display: '10 - 3', matchId: 4 }, { display: '7', matchId: 4 },
-      { display: '12 - 10', matchId: 2 }, { display: '2', matchId: 2 }, // matchId can be customized, to avoid duplicate values we keep it unique: matchId: 5 for 2
+      { display: '12 - 10', matchId: 5 }, { display: '2', matchId: 5 },
       { display: '5 + 7', matchId: 6 }, { display: '12', matchId: 6 },
-      { display: '18 - 9', matchId: 7 }, { display: '9', matchId: 7 },
+      { display: '16 - 10', matchId: 7 }, { display: '6', matchId: 7 },
       { display: '4 + 11', matchId: 8 }, { display: '15', matchId: 8 }
     ]
   }
 ];
-
-// Correct animals matching
-MEMORY_MODES[1].cards[6] = { display: '🐻', matchId: 4 };
-MEMORY_MODES[1].cards[7] = { display: '🐻', matchId: 4 };
-// Fixed duplicated keys in math
-MEMORY_MODES[3].cards[8] = { display: '12 - 10', matchId: 5 };
-MEMORY_MODES[3].cards[9] = { display: '2', matchId: 5 };
 
 function renderMemoryGame() {
   const activePlayers = state.isEliminationMode
     ? state.players.filter(p => p.active && !p.isEliminated)
     : state.players.filter(p => p.active);
 
+  if (activeMemoryGameState) {
+    startGame(activeMemoryGameState.mode, true);
+    return;
+  }
+
   // Render Selection Mode Card
   const choiceContainer = document.createElement('div');
-  choiceContainer.className = "w-full max-w-2xl bg-white border-4 border-black p-6 sm:p-8 shadow-[8px_8px_0_rgba(0,0,0,1)] flex flex-col items-center space-y-6 text-black select-none z-10 animate-fade-in";
+  choiceContainer.className = "w-full max-w-2xl bg-white border-4 border-black p-6 sm:p-8 shadow-[8px_8px_0_rgba(0,0,0,1)] flex flex-col items-center space-y-6 text-black select-none z-10 animate-fade-in my-auto";
   choiceContainer.innerHTML = `
     <div class="text-center space-y-2">
       <span class="text-4xl animate-bounce block">🧩</span>
@@ -3801,30 +3712,46 @@ function renderMemoryGame() {
     });
   });
 
-  function startGame(mode: typeof MEMORY_MODES[0]) {
-    let activeTurnIndex = 0; // Starts with player 1 index
-    
-    // Copy the cards list
-    let deck = JSON.parse(JSON.stringify(mode.cards));
-    
-    // Shuffle deck
-    for (let i = deck.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [deck[i], deck[j]] = [deck[j], deck[i]];
+  function startGame(mode: typeof MEMORY_MODES[0], isResumed: boolean = false) {
+    clearActiveMemoryTimers();
+    if (!isResumed) {
+      // Copy the cards list
+      let initialDeck = JSON.parse(JSON.stringify(mode.cards));
+      
+      // Shuffle deck
+      for (let i = initialDeck.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [initialDeck[i], initialDeck[j]] = [initialDeck[j], initialDeck[i]];
+      }
+
+      const initialLocalScores: { [id: number]: number } = {};
+      activePlayers.forEach(p => initialLocalScores[p.id] = 0);
+      const initialPlayerMismatches: { [id: number]: number } = {};
+      activePlayers.forEach(p => initialPlayerMismatches[p.id] = 0);
+
+      activeMemoryGameState = {
+        mode: mode,
+        deck: initialDeck,
+        flippedIndices: [],
+        matchedIndices: [],
+        localScores: initialLocalScores,
+        playerMismatches: initialPlayerMismatches,
+        activeTurnIndex: 0
+      };
     }
 
-    // Game tracking variables
-    let flippedIndices: number[] = [];
-    let matchedIndices: number[] = [];
-    const localScores: { [id: number]: number } = {};
-    activePlayers.forEach(p => localScores[p.id] = 0);
-    const playerMismatches: { [id: number]: number } = {};
-    activePlayers.forEach(p => playerMismatches[p.id] = 0);
+    const gameStateRef = activeMemoryGameState!;
+    let deck = gameStateRef.deck;
+    let flippedIndices = gameStateRef.flippedIndices;
+    let matchedIndices = gameStateRef.matchedIndices;
+    const localScores = gameStateRef.localScores;
+    const playerMismatches = gameStateRef.playerMismatches;
+    let activeTurnIndex = gameStateRef.activeTurnIndex;
 
     let lockGrid = false;
 
     const container = document.createElement('div');
-    container.className = "w-full max-w-5xl relative z-10 flex flex-col gap-5 animate-fade-in select-none text-black";
+    container.className = "w-full max-w-5xl relative z-10 flex flex-col gap-4 sm:gap-5 animate-fade-in select-none text-black my-auto";
 
     // Panel Header
     const header = document.createElement('div');
@@ -3844,19 +3771,19 @@ function renderMemoryGame() {
 
     // Main game flex block
     const flexArea = document.createElement('div');
-    flexArea.className = "grid grid-cols-1 md:grid-cols-4 gap-6 items-start";
+    flexArea.className = "flex flex-col md:grid md:grid-cols-4 gap-4 md:gap-6 items-center md:items-start w-full";
 
     // Sidebar detailing players stats and active turn
     const sidebar = document.createElement('div');
-    sidebar.className = "bg-white border-4 border-black p-4 space-y-4 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]";
+    sidebar.className = "bg-white border-2 md:border-4 border-black p-3 md:p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] md:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] w-full md:col-span-1";
     flexArea.appendChild(sidebar);
 
     // Card center grid board box
     const cardGridWrapper = document.createElement('div');
-    cardGridWrapper.className = "md:col-span-3 flex flex-col items-center space-y-4";
+    cardGridWrapper.className = "md:col-span-3 flex flex-col items-center space-y-4 w-full";
     
     const gridDiv = document.createElement('div');
-    gridDiv.className = "grid grid-cols-4 gap-3 bg-white border-4 border-black p-4 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] w-full aspect-square max-w-[480px]";
+    gridDiv.className = "grid grid-cols-4 gap-1.5 sm:gap-3 bg-white border-2 sm:border-4 border-black p-2 sm:p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] sm:shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] w-full aspect-square max-w-[420px] transition-all duration-300";
     cardGridWrapper.appendChild(gridDiv);
     flexArea.appendChild(cardGridWrapper);
 
@@ -3875,30 +3802,33 @@ function renderMemoryGame() {
       const currentActivePlayer = activePlayers[activeTurnIndex];
       
       sidebar.innerHTML = `
-        <div class="space-y-1.5 text-center sm:text-left border-b-2 border-black pb-3">
-          <span class="text-[10px] font-mono text-black/60 uppercase tracking-widest block font-black">AKTİF SIRADA</span>
-          <div id="active-p-glow" class="px-4 py-2.5 bg-black border-2 border-black text-white font-black flex items-center justify-center gap-2 shadow-[3px_3px_0px_0px_rgba(0,0,0,0.4)] animate-pulse">
-            <span class="text-xl">${currentActivePlayer.emoji}</span>
-            <span>${currentActivePlayer.name}</span>
+        <div class="flex flex-col gap-3 justify-between items-stretch w-full">
+          <!-- Active Player Block (Top) -->
+          <div class="flex items-center justify-between border-b-2 border-black pb-1.5 shrink-0 w-full">
+            <span class="text-[9px] font-mono text-[#FF6B6B] uppercase font-black animate-pulse">SIRA SENDE:</span>
+            <div id="active-p-glow" class="px-1.5 py-0.5 ${currentActivePlayer.color} border border-black text-black font-black flex items-center justify-center gap-1 shadow-[1px_1px_0px_rgba(0,0,0,1)] rounded-sm text-[9px]">
+              <span>${currentActivePlayer.emoji}</span>
+              <span class="truncate uppercase text-[9px]">${currentActivePlayer.name}</span>
+            </div>
           </div>
-        </div>
 
-        <div class="space-y-2.5">
-          <span class="block text-[10px] font-mono text-black/60 uppercase tracking-widest font-black">MİNİ SKORLAR</span>
-          <div class="space-y-2">
+          <!-- Mini Scores Block (Bottom) -->
+          <div class="space-y-1 select-none w-full">
+            <span class="block text-[8px] font-mono text-black/50 uppercase tracking-wider font-extrabold text-center md:text-left">MİNİ SKORLAR</span>
+            <div class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-1 gap-1">
       `;
 
       activePlayers.forEach((p, idx) => {
         const isMyTurn = idx === activeTurnIndex;
         sidebar.innerHTML += `
-          <div class="flex items-center justify-between p-2 bg-white border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] ${isMyTurn ? p.color + ' translate-y-0.5 shadow-none' : ''} transition-all font-semibold rounded select-none text-xs">
-            <div class="flex items-center gap-2">
-              <div class="w-8 h-8 rounded-full ${p.color} border-2 border-black flex items-center justify-center text-sm shadow animate-bounce" style="animation-duration: ${1 + idx * 0.2}s">
+          <div class="flex items-center justify-between p-1 bg-white border border-black shadow-[1px_1px_0px_rgba(0,0,0,1)] ${isMyTurn ? p.color + ' translate-y-0.5 shadow-none' : ''} transition-all font-semibold rounded-sm text-[10px] select-none">
+            <div class="flex items-center gap-1 min-w-0">
+              <div class="w-5 h-5 rounded-full ${p.color} border border-black flex items-center justify-center text-[10px] shadow shrink-0 animate-bounce" style="animation-duration: ${1 + idx * 0.2}s">
                 ${p.emoji}
               </div>
-              <span class="text-xs font-black text-black">${p.name}</span>
+              <span class="text-[9px] font-black text-black truncate">${p.name}</span>
             </div>
-            <div class="text-xs font-mono font-black text-black bg-white border border-black px-1.5 py-0.5">
+            <div class="text-[9px] font-mono font-black text-black bg-white border border-black px-1 py-0.2 shrink-0 ml-1">
               ${localScores[p.id]} px
             </div>
           </div>
@@ -3906,12 +3836,13 @@ function renderMemoryGame() {
       });
 
       sidebar.innerHTML += `
+            </div>
           </div>
         </div>
       `;
 
       // Highlight card board perimeter glow matching current player
-      gridDiv.className = `grid grid-cols-4 gap-3 bg-white border-4 ${currentActivePlayer.borderColor} p-4 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] w-full aspect-square max-w-[480px] transition-all duration-300`;
+      gridDiv.className = `grid grid-cols-4 gap-1.5 sm:gap-3 bg-white border-2 sm:border-4 ${currentActivePlayer.borderColor} p-2 sm:p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] sm:shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] w-full aspect-square max-w-[420px] transition-all duration-300`;
     }
 
     function renderGrid() {
@@ -3926,12 +3857,12 @@ function renderMemoryGame() {
         card.innerHTML = `
           <div class="w-full h-full duration-450 preserve-3d relative transition-transform ${isFlipped ? 'rotate-y-180' : ''}">
             <!-- Card Front Face (Mystery side) -->
-            <div class="absolute inset-0 bg-[#FF6B6B] border-4 border-black hover:bg-black hover:text-white rounded-none flex items-center justify-center text-xl sm:text-3xl backface-hidden shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] font-black text-black select-none text-center">
+            <div class="absolute inset-0 bg-[#FF6B6B] border-2 sm:border-4 border-black hover:bg-black hover:text-white rounded-none flex items-center justify-center text-lg sm:text-2xl backface-hidden shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] font-black text-black select-none text-center">
               ?
             </div>
             <!-- Card Back Face -->
-            <div class="absolute inset-0 bg-white border-4 border-black rounded-none flex items-center justify-center backface-hidden rotate-y-180 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] bg-gradient-to-br from-yellow-50 to-white text-center leading-none">
-              <span class="${mode.id === 'math' ? 'text-[11px] sm:text-[15px] font-mono font-black px-1 text-black' : 'text-3xl sm:text-5xl'} font-display font-black">${cardObj.display}</span>
+            <div class="absolute inset-0 bg-white border-2 sm:border-4 border-black rounded-none flex items-center justify-center backface-hidden rotate-y-180 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] bg-gradient-to-br from-yellow-50 to-white text-center leading-none">
+              <span class="${mode.id === 'math' ? 'text-[9.5px] sm:text-xs md:text-sm font-mono font-black px-0.5 text-black' : 'text-xl sm:text-3xl'} font-display font-black truncate">${cardObj.display}</span>
             </div>
           </div>
         `;
@@ -3944,7 +3875,7 @@ function renderMemoryGame() {
     }
 
     function handleCardClick(index: number) {
-      if (lockGrid || flippedIndices.length >= 2 || flippedIndices.includes(index)) return;
+      if (lockGrid || flippedIndices.length >= 2 || flippedIndices.includes(index) || matchedIndices.includes(index)) return;
 
       flippedIndices.push(index);
       sfx.playTick();
@@ -3957,14 +3888,15 @@ function renderMemoryGame() {
         if (deck[first].matchId === deck[second].matchId) {
           // MATCH MADE!
           sfx.playSuccess();
-          setTimeout(() => {
+          const matchTimer = setTimeout(() => {
             matchedIndices.push(first, second);
             
             // Reward current active player
             const actPlayer = activePlayers[activeTurnIndex];
             localScores[actPlayer.id] += 1;
 
-            flippedIndices = [];
+            gameStateRef.flippedIndices = [];
+            flippedIndices = gameStateRef.flippedIndices;
             lockGrid = false;
             
             renderGrid();
@@ -3976,21 +3908,25 @@ function renderMemoryGame() {
               handleGameCompletion();
             }
           }, 600);
+          activeMemoryTimers.push(matchTimer);
         } else {
           // FAIL MISMATCH
           sfx.playFail();
           const actPlayer = activePlayers[activeTurnIndex];
           playerMismatches[actPlayer.id] = (playerMismatches[actPlayer.id] || 0) + 1;
-          setTimeout(() => {
-            flippedIndices = [];
+          const mismatchTimer = setTimeout(() => {
+            gameStateRef.flippedIndices = [];
+            flippedIndices = gameStateRef.flippedIndices;
             lockGrid = false;
             
             // Switch Turn
             activeTurnIndex = (activeTurnIndex + 1) % activePlayers.length;
+            gameStateRef.activeTurnIndex = activeTurnIndex;
             
             renderGrid();
             updateTurnVisuals();
           }, 1200);
+          activeMemoryTimers.push(mismatchTimer);
         }
       }
     }
@@ -4074,13 +4010,19 @@ function renderMemoryGame() {
         resultModal.classList.remove('hidden');
 
         document.getElementById('memory-modal-continue')?.addEventListener('click', () => {
+          clearActiveMemoryTimers();
+          activeMemoryGameState = null;
           handleGameFinished();
         });
       }
     }
 
     // Bind initial configurations
-    document.getElementById('memory-quit')?.addEventListener('click', () => setScreen('gamesHub'));
+    document.getElementById('memory-quit')?.addEventListener('click', () => {
+      clearActiveMemoryTimers();
+      activeMemoryGameState = null;
+      setScreen('gamesHub');
+    });
     updateTurnVisuals();
     renderGrid();
     renderLiveScoreHUD(container, activePlayers, localScores, ' Çift');
@@ -4122,7 +4064,7 @@ function renderColorTrapGame() {
   let roundStartTime = 0;
 
   const container = document.createElement('div');
-  container.className = "w-full max-w-5xl relative z-10 flex flex-col min-h-[580px] justify-between space-y-4 animate-fade-in select-none text-black";
+  container.className = "w-full max-w-5xl relative z-10 flex flex-col min-h-[580px] justify-between space-y-4 animate-fade-in select-none text-black my-auto";
 
   // Header panel
   const header = document.createElement('div');
@@ -4477,7 +4419,7 @@ function renderClickDerbyGame() {
   let gameLoopTimer: any = null;
 
   const container = document.createElement('div');
-  container.className = "w-full max-w-5xl relative z-10 flex flex-col min-h-[580px] justify-between space-y-4 animate-fade-in select-none text-black";
+  container.className = "w-full max-w-5xl relative z-10 flex flex-col min-h-[580px] justify-between space-y-4 animate-fade-in select-none text-black my-auto";
 
   // Top header panel
   const header = document.createElement('div');
@@ -4802,7 +4744,7 @@ function UNUSED_renderReactionGame() {
   activePlayers.forEach(p => roundPoints[p.id] = 0);
 
   const container = document.createElement('div');
-  container.className = "w-full max-w-6xl relative z-10 flex flex-col h-[90vh] max-h-[850px] justify-between space-y-4 animate-fade-in select-none text-black";
+  container.className = "w-full max-w-6xl relative z-10 flex flex-col h-[90vh] max-h-[850px] justify-between space-y-4 animate-fade-in select-none text-black my-auto";
 
   // Top header panel
   const header = document.createElement('div');
@@ -5262,7 +5204,7 @@ function renderGameOver() {
   const absoluteWinner = podium[0];
 
   const container = document.createElement('div');
-  container.className = "w-full max-w-4xl bg-white border-4 border-black p-6 sm:p-10 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] relative z-10 flex flex-col items-center space-y-8 animate-fade-in text-center text-black";
+  container.className = "w-full max-w-4xl bg-white border-4 border-black p-6 sm:p-10 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] relative z-10 flex flex-col items-center space-y-8 animate-fade-in text-center text-black my-auto";
 
   let podiumHTML = `
     <!-- Top badge ribbon -->
@@ -5645,7 +5587,7 @@ function renderRaceGame() {
   });
 
   const container = document.createElement('div');
-  container.className = "w-full max-w-5xl relative z-10 flex flex-col min-h-[580px] justify-between space-y-4 animate-fade-in select-none text-black";
+  container.className = "w-full max-w-5xl relative z-10 flex flex-col min-h-[580px] justify-between space-y-4 animate-fade-in select-none text-black my-auto";
 
   // Top header panel
   const header = document.createElement('div');
@@ -6094,151 +6036,51 @@ function renderRaceGame() {
 // ==========================================
 function renderCostumeShop() {
   const container = document.createElement('div');
-  container.className = "w-full max-w-5xl relative z-10 flex flex-col space-y-6 animate-fade-in";
+  container.className = "w-full max-w-4xl relative z-10 flex flex-col gap-2 animate-fade-in text-black select-none max-h-screen my-auto justify-center";
 
-  // Find currently selected player
-  const activePlayers = state.players.filter(p => p.active);
-  // Ensure activeShopPlayerId is in the active set
-  let activePlayer = activePlayers.find(p => p.id === activeShopPlayerId);
-  if (!activePlayer) {
-    activePlayer = activePlayers[0];
-    if (activePlayer) activeShopPlayerId = activePlayer.id;
-  }
+  // Player 1 is always the shopper/avatar owner
+  const activePlayer = state.players[0] || state.players.filter(p => p.active)[0];
 
   if (!activePlayer) {
-    // Fallback if no active player
     setScreen('lobby');
     return;
   }
 
-  // Header Panel
+  // Ensure activePlayer has accessory state initialized
+  if (!activePlayer.unlockedAccessories) {
+    activePlayer.unlockedAccessories = [];
+  }
+
+  // Compact Header Row
   const headerDiv = document.createElement('div');
-  headerDiv.className = "bg-white border-4 border-black p-5 sm:p-6 text-center space-y-2.5 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] relative overflow-hidden text-black";
+  headerDiv.className = "bg-white border-2 sm:border-4 border-black p-2 flex items-center justify-between gap-2 shadow-[3px_3px_0px_rgba(0,0,0,1)]";
   headerDiv.innerHTML = `
-    <div class="absolute -top-10 -right-10 w-24 h-24 bg-yellow-200 border-4 border-black rotate-45 pointer-events-none"></div>
-    <div class="text-3xl sm:text-4xl">🛍️</div>
-    <h2 class="text-2xl sm:text-3.5xl font-display font-black uppercase tracking-tight text-black leading-none">Kostüm Arenası & Gardırop</h2>
-    <p class="text-black/80 font-bold text-xs sm:text-sm max-w-xl mx-auto leading-relaxed">
-      Raundlardan topladığın altınlarla kahramanına havalı aksesuarlar satın al veya bilgisayarından / telefonundan kendi fotoğrafını yükleyerek arenaya doğrudan kendi yüzünle katıl!
-    </p>
+    <div class="flex items-center gap-1.5">
+      <span class="text-lg shrink-0">🛍️</span>
+      <div class="text-left">
+        <h2 class="text-[10px] sm:text-xs font-display font-black uppercase text-black leading-none">MAĞAZA</h2>
+        <p class="text-[8px] text-black/60 font-semibold leading-none mt-1">Kahramanına aksesuarlar giydir!</p>
+      </div>
+      <!-- Coin Indicator -->
+      <div class="ml-2 flex items-center gap-1 bg-[#FFF9C4] border border-black px-1.5 py-0.5 rounded shadow-[1px_1px_0_rgba(0,0,0,1)] text-[9px] font-black shrink-0">
+        <span>🪙</span>
+        <span>${activePlayer.globalCoins || 0}</span>
+      </div>
+    </div>
+    <div class="flex items-center gap-1.5 shrink-0">
+      <button id="shop-lobby-btn" class="px-2 py-1 bg-white hover:bg-neutral-100 text-black border border-black font-black text-[9px] uppercase cursor-pointer shadow-[1.5px_1.5px_0_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all leading-none rounded">
+        🏠 LOBİ
+      </button>
+      <button id="shop-arena-btn" class="px-2 py-1 bg-black hover:bg-zinc-800 text-white border border-black font-black text-[9px] uppercase cursor-pointer shadow-[1.5px_1.5px_0_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all leading-none rounded">
+        🎮 ARENA
+      </button>
+    </div>
   `;
   container.appendChild(headerDiv);
 
-  // Selector for switching between players inside the shop
-  const playerTabs = document.createElement('div');
-  playerTabs.className = "flex flex-wrap gap-2 w-full justify-center";
-  activePlayers.forEach(p => {
-    const isSelected = p.id === activeShopPlayerId;
-    const tabBtn = document.createElement('button');
-    tabBtn.className = `px-5 py-3 border-4 border-black font-black uppercase tracking-wider text-xs cursor-pointer transition-all ${
-      isSelected 
-        ? 'bg-black text-white shadow-none translate-x-[2px] translate-y-[2px]' 
-        : `${p.color} text-black shadow-[4px_4px_0_rgba(0,0,0,1)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none hover:bg-black hover:text-white`
-    }`;
-    tabBtn.innerHTML = `
-      <div class="flex items-center gap-2">
-        <span class="text-sm shrink-0">${p.customImage ? '🖼️' : p.emoji}</span>
-        <span>${p.name}</span>
-      </div>
-    `;
-    tabBtn.addEventListener('click', () => {
-      activeShopPlayerId = p.id;
-      sfx.playTick();
-      render();
-    });
-    playerTabs.appendChild(tabBtn);
-  });
-  container.appendChild(playerTabs);
-
-  // Twin Column Panels: Left (Preview & Upload) | Right (Shop items catalogue)
-  const twinsGrid = document.createElement('div');
-  twinsGrid.className = "grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch";
-  container.appendChild(twinsGrid);
-
-  // --- LEFT COLUMN: PROFILE CARD & IMAGE UPLOADER ---
-  const leftCol = document.createElement('div');
-  leftCol.className = "lg:col-span-5 bg-white border-4 border-black p-5 flex flex-col justify-between space-y-6 shadow-[8px_8px_0_rgba(0,0,0,1)] text-center text-black";
-  
-  // Custom badges list rendering
-  const badgesListHTML = activePlayer.unlockedAchievements && activePlayer.unlockedAchievements.length > 0 
-    ? `<div class="flex flex-wrap gap-1.5 justify-center py-1.5 select-none bg-neutral-50/50 border-2 border-black border-dashed">
-         ${activePlayer.unlockedAchievements.map(id => {
-           const ach = ACHIEVEMENTS.find(a => a.id === id);
-           if (!ach) return '';
-           return `<span class="inline-flex items-center justify-center bg-[#FFEAA7] border border-black px-2 py-1 text-sm shadow-[1.5px_1.5px_0_rgba(0,0,0,1)] hover:-translate-y-0.5 duration-100 cursor-help" title="${ach.name}: ${ach.description}">
-                     ${ach.badgeEmoji}
-                   </span>`;
-         }).join('')}
-       </div>`
-    : `<div class="text-[8px] font-mono uppercase text-gray-400 tracking-widest py-1.5">Kazanılmış rozet bulunmuyor</div>`;
-
-  leftCol.innerHTML = `
-    <div class="space-y-4">
-      <div class="border-b-2 border-black pb-2">
-        <span class="text-[10px] font-mono font-black uppercase tracking-widest text-black/50">AKTİF PROFİLİZASYON</span>
-        <h3 class="text-xl font-black text-black uppercase leading-normal">${activePlayer.name}</h3>
-      </div>
-
-      <!-- Badges Display Area -->
-      <div class="space-y-1">
-        <span class="block text-[8px] font-mono font-black text-black/40 uppercase tracking-widest text-center">ROZET VİTRİNİ</span>
-        ${badgesListHTML}
-      </div>
-
-      <!-- Drag & Drop Container with Active Avatar preview -->
-      <div id="shop-drop-zone" class="mx-auto my-3 p-4 border-4 border-dashed border-gray-400 hover:border-black rounded-none cursor-pointer bg-neutral-50 transition-colors flex flex-col items-center justify-center space-y-4 min-h-[200px] relative group select-none shadow-inner">
-        <div class="scale-125 transform mt-2 relative">
-          ${getPlayerAvatarHTML(activePlayer, "w-24 h-24 text-5xl animate-float")}
-        </div>
-        <div class="text-center space-y-1">
-          <p class="text-xs font-black text-black">Fotoğrafını Sürükle Bırak</p>
-          <p class="text-[10px] text-gray-500 font-semibold font-mono uppercase">Veya Tıklayıp Dosya Seç</p>
-        </div>
-        <input type="file" id="shop-file-input" accept="image/*" class="hidden" />
-      </div>
-
-      <div class="flex flex-col gap-2">
-        <button id="shop-upload-trigger-btn" class="w-full py-3 bg-[#4ECDC4] hover:bg-black hover:text-white border-2 border-black text-black font-black text-xs uppercase tracking-wider transition-colors shadow-[3px_3px_0_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none cursor-pointer flex items-center justify-center gap-1.5">
-          📷 KENDİ RESMİNİ SEÇ
-        </button>
-        ${activePlayer.customImage ? `
-          <button id="shop-remove-img-btn" class="w-full py-2 bg-[#FF6B6B] hover:bg-black hover:text-white border-2 border-black text-black font-black text-[10px] uppercase tracking-wider transition-colors shadow-[2px_2px_0_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none cursor-pointer">
-            🛑 Özel Fotoğrafı Kaldır
-          </button>
-        ` : ''}
-      </div>
-    </div>
-
-    <!-- Balance panel -->
-    <div class="bg-[#FFEAA7] border-4 border-black p-4 mt-4 shadow-[4px_4px_0_rgba(0,0,0,1)] relative overflow-hidden">
-      <div class="absolute -bottom-8 -right-8 text-6xl opacity-15 pointer-events-none select-none">🪙</div>
-      <div class="text-left leading-tight">
-        <span class="block text-[9px] font-mono font-black text-black/50 uppercase tracking-widest">KULLANILABİLİR HESAP BAKİYESİ</span>
-        <div class="flex items-center gap-1.5 mt-1">
-          <span class="text-3xl font-black font-display text-black">${activePlayer.globalCoins || 0}</span>
-          <span class="text-sm font-black font-mono">ALTIN COIN</span>
-        </div>
-        <p class="text-[9px] font-semibold text-black/60 mt-1.5 leading-relaxed">Puanlar her oyun tamamlandığında altın olarak hesabına eklenir.</p>
-      </div>
-    </div>
-  `;
-  twinsGrid.appendChild(leftCol);
-
-  // --- RIGHT COLUMN: SHOP ITEMS ---
-  const rightCol = document.createElement('div');
-  rightCol.className = "lg:col-span-7 bg-white border-4 border-black p-5 flex flex-col justify-between space-y-4 shadow-[8px_8px_0_rgba(0,0,0,1)] text-black";
-  
-  let catalogHTML = `
-    <div class="border-b-2 border-black pb-2 mb-2 flex justify-between items-center">
-      <div>
-        <span class="text-[10px] font-mono font-black uppercase tracking-widest text-black/50">MAĞAZA KATALOĞU</span>
-        <h3 class="text-xl font-black text-black">Aksesuarlar & Kostümler</h3>
-      </div>
-      <span class="text-xs bg-black text-white font-mono font-black px-2.5 py-1 uppercase">${SHOP_ITEMS.length} Ürün Mevcut</span>
-    </div>
-    
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[460px] overflow-y-auto pr-1">
-  `;
+  // Shop Catalogue grid - tightly packed for mobile landscape view!
+  const catalogGrid = document.createElement('div');
+  catalogGrid.className = "grid grid-cols-2 xs:grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-1.5 w-full pr-1 max-h-[190px] overflow-y-auto";
 
   SHOP_ITEMS.forEach(item => {
     const isUnlocked = activePlayer.unlockedAccessories?.includes(item.id);
@@ -6249,201 +6091,68 @@ function renderCostumeShop() {
     if (isUnlocked) {
       if (isEquipped) {
         actionBtnHTML = `
-          <button id="btn-equip-${item.id}" class="w-full py-2 bg-[#FF6B6B] text-black border-2 border-black font-black text-xs uppercase tracking-wider hover:bg-black hover:text-white transition-all cursor-pointer shadow-[2px_2px_0_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none">
-            Çıkar
+          <button id="btn-equip-${item.id}" class="w-full py-1 bg-[#FF6B6B] hover:bg-black hover:text-white border border-black font-black text-[8px] uppercase tracking-wider transition-all cursor-pointer shadow-[1px_1px_0_rgba(0,0,0,1)] rounded whitespace-nowrap">
+            ❌ ÇIKAR
           </button>
         `;
       } else {
         actionBtnHTML = `
-          <button id="btn-equip-${item.id}" class="w-full py-2 bg-[#4ECDC4] text-black border-2 border-black font-black text-xs uppercase tracking-wider hover:bg-black hover:text-white transition-all cursor-pointer shadow-[2px_2px_0_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none">
-            Giy
+          <button id="btn-equip-${item.id}" class="w-full py-1 bg-[#4ECDC4] hover:bg-black hover:text-white border border-black font-black text-[8px] uppercase tracking-wider transition-all cursor-pointer shadow-[1px_1px_0_rgba(0,0,0,1)] rounded whitespace-nowrap">
+            👕 GİY
           </button>
         `;
       }
     } else {
       actionBtnHTML = `
-        <button id="btn-buy-${item.id}" ${canAfford ? '' : 'disabled'} class="w-full py-2 ${canAfford ? 'bg-yellow-400 text-black hover:bg-black hover:text-white' : 'bg-gray-100 text-gray-400 cursor-not-allowed'} border-2 border-black font-black text-xs uppercase tracking-wider transition-all cursor-pointer shadow-[2px_2px_0_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none flex items-center justify-center gap-1">
-          🪙 ${item.cost} Altın Al
+        <button id="btn-buy-${item.id}" ${canAfford ? '' : 'disabled'} class="w-full py-1 ${canAfford ? 'bg-yellow-400 text-black hover:bg-black hover:text-white' : 'bg-neutral-100 text-neutral-400 cursor-not-allowed'} border border-black font-black text-[8px] uppercase transition-all cursor-pointer shadow-[1px_1px_0_rgba(0,0,0,1)] flex items-center justify-center gap-0.5 leading-none rounded whitespace-nowrap">
+          🪙 ${item.cost} AL
         </button>
       `;
     }
 
-    catalogHTML += `
-      <div class="border-2 border-black bg-white p-3 flex flex-col justify-between shadow-[3px_3px_0_rgba(0,0,0,1)] relative group ${isEquipped ? 'bg-yellow-50/50 border-yellow-500' : ''}">
-        ${isEquipped ? `
-          <div class="absolute -top-2.5 -right-2 px-1.5 py-0.5 text-[8px] font-mono font-black text-white bg-black border border-black uppercase rotate-6">
-            KuŞanıldı
-          </div>
-        ` : ''}
-
-        <div class="flex items-start gap-3 mb-2.5">
-          <div class="w-12 h-12 rounded-none bg-neutral-100 border-2 border-black flex items-center justify-center text-3xl shrink-0 shadow-[1.5px_1.5px_0_rgba(0,0,0,1)] relative select-none">
-            ${item.emoji}
-          </div>
-          <div class="space-y-0.5">
-            <h4 class="text-xs sm:text-sm font-black text-black uppercase leading-none">${item.name}</h4>
-            <span class="inline-block text-[8px] font-mono font-black bg-neutral-100 border border-black px-1 uppercase text-black/60 scale-90 origin-left">${item.type}</span>
-            <p class="text-[10px] text-gray-500 font-semibold leading-normal mt-1">${item.description}</p>
-          </div>
+    const card = document.createElement('div');
+    card.className = `border-2 border-black bg-white p-2 flex flex-col justify-between shadow-[2px_2px_0_rgba(0,0,0,1)] relative transition-all rounded-md min-h-[95px] ${isEquipped ? 'bg-yellow-50/50 border-yellow-500' : ''}`;
+    card.innerHTML = `
+      ${isEquipped ? `
+        <div class="absolute -top-1 -right-0.5 px-1 py-0.2 text-[6px] font-mono font-black text-white bg-black border border-black uppercase rotate-6 shadow-[0.5px_0.5px_0_rgba(0,0,0,1)]">
+          GİYİLDİ
         </div>
+      ` : ''}
 
-        <div class="pt-1.5">
-          ${actionBtnHTML}
+      <div class="flex items-start gap-1.5 mb-1 text-left">
+        <div class="w-7 h-7 rounded border border-black flex items-center justify-center text-sm shrink-0 shadow-[0.5px_0.5px_0_rgba(0,0,0,1)] bg-neutral-50 select-none">
+          ${item.emoji}
         </div>
+        <div class="min-w-0 flex-1 leading-tight">
+          <h4 class="text-[8.5px] font-black text-black uppercase leading-none truncate">${item.name}</h4>
+          <span class="inline-block text-[6px] font-mono font-black bg-neutral-100 border border-black px-0.5 text-black/60 scale-90 origin-left uppercase mt-0.5">${item.type}</span>
+          <p class="text-[7.5px] text-gray-400 leading-tight block truncate mt-0.5">${item.description}</p>
+        </div>
+      </div>
+
+      <div class="pt-1 border-t border-dashed border-black/10">
+        ${actionBtnHTML}
       </div>
     `;
+    catalogGrid.appendChild(card);
   });
 
-  catalogHTML += `</div>`;
-  rightCol.innerHTML = catalogHTML;
-  twinsGrid.appendChild(rightCol);
-
-  // --- ACHIEVEMENTS GRID ---
-  const achievementsDiv = document.createElement('div');
-  achievementsDiv.className = "bg-white border-4 border-black p-5 sm:p-6 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] text-black mt-2";
-  
-  let achievementsHTML = `
-    <div class="border-b-2 border-black pb-2.5 mb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-      <div>
-        <span class="text-[10px] font-mono font-black uppercase tracking-widest text-black/50">ROZET VİTRİNİ & BAŞARIMLAR</span>
-        <h3 class="text-xl sm:text-2xl font-display font-black text-black">MİLLETİN KUPALARI & BAŞARIMLARI</h3>
-      </div>
-      <div class="text-xs bg-[#4ECDC4] border-2 border-black text-black font-mono font-black px-3 py-1.5 uppercase shadow-[2.5px_2.5px_0_rgba(0,0,0,1)] select-none">
-        KAZANILAN: ${activePlayer.unlockedAchievements?.length || 0} / ${ACHIEVEMENTS.length}
-      </div>
-    </div>
-    
-    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-  `;
-
-  ACHIEVEMENTS.forEach(ach => {
-    const isUnlocked = activePlayer.unlockedAchievements?.includes(ach.id) || false;
-    
-    let progressStr = '';
-    if (ach.id === 'balloon_wins_5') {
-      const currentWins = activePlayer.balloonWinsCount || 0;
-      progressStr = ` <span class="font-mono text-[9px] font-bold text-gray-500">(${currentWins}/5)</span>`;
-    } else if (ach.id === 'collector_3') {
-      const currentAcc = activePlayer.unlockedAccessories?.length || 0;
-      progressStr = ` <span class="font-mono text-[9px] font-bold text-gray-500">(${currentAcc}/3)</span>`;
-    } else if (ach.id === 'coin_lord_100') {
-      const currentCoins = activePlayer.globalCoins || 0;
-      progressStr = ` <span class="font-mono text-[9px] font-bold text-gray-500">(${currentCoins}/100)</span>`;
-    } else if (ach.id === 'streak_3') {
-      const currentStreak = activePlayer.rewardStreak || 0;
-      progressStr = ` <span class="font-mono text-[9px] font-bold text-gray-500">(${currentStreak}/3)</span>`;
-    }
-
-    if (isUnlocked) {
-      achievementsHTML += `
-        <div class="border-2 border-black bg-[#EBFBEE] p-3 flex items-start gap-3 shadow-[2.5px_2.5px_0_rgba(0,0,0,1)] relative overflow-hidden group">
-          <div class="absolute -top-1 -right-7 w-20 h-6 bg-emerald-500 text-white border-b border-black flex items-center justify-center text-[7px] font-mono font-black uppercase rotate-45 select-none opacity-80">
-            AÇILDI
-          </div>
-          <div class="w-11 h-11 shrink-0 rounded-none bg-white border-2 border-black flex items-center justify-center text-2xl shadow-[1.5px_1.5px_0_rgba(0,0,0,1)]">
-            ${ach.badgeEmoji}
-          </div>
-          <div class="text-left min-w-0 flex-1">
-            <h4 class="text-xs font-black text-black uppercase pr-4 truncate">${ach.name}${progressStr}</h4>
-            <p class="text-[9px] text-[#2D3748]/85 font-semibold leading-tight mt-0.5">${ach.description}</p>
-            <div class="mt-1 flex items-center gap-1">
-              <span class="text-[8px] font-mono font-black bg-emerald-100 text-emerald-800 border border-emerald-300 px-1 py-0.2">AÇILDI ✅</span>
-            </div>
-          </div>
-        </div>
-      `;
-    } else {
-      achievementsHTML += `
-        <div class="border-2 border-black bg-neutral-50/55 p-3 flex items-start gap-3 shadow-[1.5px_1.5px_0_rgba(0,0,0,0.1)] relative overflow-hidden opacity-75">
-          <div class="absolute top-1.5 right-1.5 flex items-center justify-center text-[10px] opacity-45">
-            🔒
-          </div>
-          <div class="w-11 h-11 shrink-0 rounded-none bg-neutral-100 border-2 border-gray-300 flex items-center justify-center text-2xl grayscale pointer-events-none select-none">
-            ${ach.badgeEmoji.substring(0, 2)}
-          </div>
-          <div class="text-left min-w-0 flex-1">
-            <h4 class="text-xs font-black text-gray-400 uppercase truncate pr-3">${ach.name}${progressStr}</h4>
-            <p class="text-[9px] text-gray-400 font-semibold leading-tight mt-0.5">${ach.description}</p>
-            <div class="mt-1 flex items-center gap-1">
-              <span class="text-[8px] font-mono font-bold bg-gray-100 text-gray-400 border border-gray-200 px-1 py-0.2">KİLİTLİ</span>
-            </div>
-          </div>
-        </div>
-      `;
-    }
-  });
-
-  achievementsHTML += `</div>`;
-  achievementsDiv.innerHTML = achievementsHTML;
-  container.appendChild(achievementsDiv);
-
-  // Footer navigation actions
-  const bottomNav = document.createElement('div');
-  bottomNav.className = "flex w-full justify-center pt-3";
-  bottomNav.innerHTML = `
-    <button id="shop-quit-btn" class="px-10 py-4.5 bg-black text-white border-4 border-black font-black tracking-widest text-xs uppercase cursor-pointer hover:bg-white hover:text-black shadow-[6px_6px_0px_0px_rgba(255,222,0,1)] duration-200 transition-all active:translate-x-1 active:translate-y-1 active:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
-      ◀ Arenaya Dön ve Başla!
-    </button>
-  `;
-  container.appendChild(bottomNav);
+  container.appendChild(catalogGrid);
   appRoot.appendChild(container);
 
-  // Bind interactions & DOM events dynamically
+  // Bind top bar navigations & costume actions
   setTimeout(() => {
-    // 1. Files upload trigger click listener
-    const uploadTrigger = document.getElementById('shop-upload-trigger-btn');
-    const fileInput = document.getElementById('shop-file-input') as HTMLInputElement | null;
-    uploadTrigger?.addEventListener('click', () => {
-      fileInput?.click();
-    });
-
-    // 2. Drag & Drop features
-    const dropZone = document.getElementById('shop-drop-zone');
-    
-    dropZone?.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      dropZone.classList.add('bg-neutral-200');
-    });
-
-    dropZone?.addEventListener('dragleave', () => {
-      dropZone.classList.remove('bg-neutral-200');
-    });
-
-    dropZone?.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dropZone.classList.remove('bg-neutral-200');
-      const files = e.dataTransfer?.files;
-      if (files && files.length > 0) {
-        handleAvatarUpload(files[0]);
-      }
-    });
-
-    fileInput?.addEventListener('change', () => {
-      const files = fileInput.files;
-      if (files && files.length > 0) {
-        handleAvatarUpload(files[0]);
-      }
-    });
-
-    function handleAvatarUpload(file: File) {
-      if (!file.type.startsWith('image/')) return;
-      resizeAndSetCustomImage(activePlayer.id, file, (resizedBase64) => {
-        activePlayer.customImage = resizedBase64;
-        savePlayerPersistentData(activePlayer);
-        sfx.playPowerUp();
-        render();
-      });
-    }
-
-    // 3. Remove custom image trigger
-    document.getElementById('shop-remove-img-btn')?.addEventListener('click', () => {
-      activePlayer.customImage = null;
-      savePlayerPersistentData(activePlayer);
+    document.getElementById('shop-lobby-btn')?.addEventListener('click', () => {
       sfx.playTick();
-      render();
+      setScreen('lobby');
     });
 
-    // 4. Buy accessory bindings
+    document.getElementById('shop-arena-btn')?.addEventListener('click', () => {
+      sfx.playTick();
+      setScreen('gamesHub');
+    });
+
+    // Buy/equip accessory bindings
     SHOP_ITEMS.forEach(item => {
       const isUnlocked = activePlayer.unlockedAccessories?.includes(item.id);
       if (isUnlocked) {
@@ -6472,11 +6181,178 @@ function renderCostumeShop() {
       }
     });
 
-    // 5. Back navigation
-    document.getElementById('shop-quit-btn')?.addEventListener('click', () => {
-      setScreen(lastScreenBeforeShop);
-    });
+  }, 0);
+}
 
+// ==========================================
+// ACHIEVEMENTS SHOWCASE SCREEN (Başarımlar)
+// ==========================================
+function renderAchievements() {
+  const container = document.createElement('div');
+  container.className = "w-full max-w-5xl relative z-10 flex flex-col gap-3.5 animate-fade-in text-black select-none my-auto";
+
+  // Find currently selected player
+  const activePlayers = state.players.filter(p => p.active);
+  let activePlayer = activePlayers.find(p => p.id === activeAchievementsPlayerId);
+  if (!activePlayer) {
+    activePlayer = activePlayers[0];
+    if (activePlayer) {
+      activeAchievementsPlayerId = activePlayer.id;
+    }
+  }
+
+  if (!activePlayer) {
+    setScreen('lobby');
+    return;
+  }
+
+  // Header Panel
+  const headerDiv = document.createElement('div');
+  headerDiv.className = "bg-white border-4 border-black p-3.5 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-[4px_4px_0px_rgba(0,0,0,1)]";
+  headerDiv.innerHTML = `
+    <div class="flex items-center gap-2.5">
+      <span class="text-2xl shrink-0 animate-bounce-short">🏆</span>
+      <div class="text-left">
+        <h2 class="text-base sm:text-lg font-display font-black uppercase text-black leading-none">BAŞARIMLAR VİTRİNİ</h2>
+        <p class="text-black/60 font-semibold text-[10px] mt-1 leading-none">Oyuncuların oyun içi kupalarını, ödüllerini ve madalyalarını takip et!</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-2 shrink-0">
+      <button id="ach-lobby-btn" class="px-3 py-1.5 bg-white hover:bg-neutral-100 text-black border-2 border-black font-black text-[10px] uppercase cursor-pointer shadow-[2px_2px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all leading-none rounded">
+        🏠 LOBİYE DÖN
+      </button>
+      <button id="ach-arena-btn" class="px-3 py-1.5 bg-black hover:bg-zinc-800 text-white border-2 border-black font-black text-[10px] uppercase cursor-pointer shadow-[2px_2px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all leading-none rounded">
+        🎮 OYUN SEÇİMİ
+      </button>
+    </div>
+  `;
+  container.appendChild(headerDiv);
+
+  // Info card for current active player
+  const topControlRow = document.createElement('div');
+  topControlRow.className = "bg-[#FFF9C4] border-4 border-black p-3 shadow-[4px_4px_0_rgba(0,0,0,1)] flex flex-col sm:flex-row items-center justify-between gap-3";
+  const unlockedCount = activePlayer.unlockedAchievements?.length || 0;
+  
+  topControlRow.innerHTML = `
+    <div class="flex items-center gap-2 flex-wrap">
+      <span class="text-[10px] font-mono font-black text-black/50 uppercase select-none">AKTİF SEÇİLİ OYUNCU:</span>
+      <div class="flex items-center gap-1.5 bg-white border-2 border-black py-1 px-3 rounded-md shadow-[1.5px_1.5px_0_rgba(0,0,0,1)]">
+        <div class="w-6 h-6 rounded-full border border-black overflow-hidden flex items-center justify-center bg-zinc-50">
+          ${getPlayerAvatarHTML(activePlayer, "w-5 h-5 text-xs")}
+        </div>
+        <span class="text-xs font-black uppercase text-black select-none">${activePlayer.name}</span>
+        <span class="font-bold text-xs text-[#FCA311] ml-1 select-none">🪙 ${activePlayer.globalCoins || 0}</span>
+      </div>
+    </div>
+
+    <!-- Achievements Progress Count -->
+    <div class="flex items-center gap-2 flex-wrap text-left">
+      <span class="text-[10px] font-mono text-black/55 uppercase font-black">TOPLAM KUPALAR:</span>
+      <span class="px-2.5 py-1 bg-[#4ECDC4] border-2 border-black font-mono font-black text-xs text-black shadow-[1px_1px_0_rgba(0,0,0,1)]">
+        ${unlockedCount} / ${ACHIEVEMENTS.length} AÇILDI
+      </span>
+    </div>
+  `;
+  container.appendChild(topControlRow);
+
+  // Tabs layout for player switcher
+  const tabGrid = document.createElement('div');
+  tabGrid.className = "grid grid-cols-2 sm:grid-cols-5 gap-2 w-full max-w-5xl shrink-0";
+  activePlayers.forEach(p => {
+    const isSelected = p.id === activeAchievementsPlayerId;
+    const tabBtn = document.createElement('button');
+    tabBtn.className = `px-2 py-1.5 border-2 border-black font-black uppercase text-[10px] sm:text-[11px] cursor-pointer transition-all flex items-center justify-center gap-1.5 rounded-md h-9 truncate ${
+      isSelected 
+        ? 'bg-black text-white shadow-none' 
+        : `${p.color} text-black shadow-[2px_2px_0_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none hover:opacity-90`
+    }`;
+    tabBtn.innerHTML = `
+      <span class="text-sm shrink-0">${p.emoji}</span>
+      <span class="truncate leading-none">${p.name}</span>
+    `;
+    tabBtn.addEventListener('click', () => {
+      activeAchievementsPlayerId = p.id;
+      sfx.playTick();
+      render();
+    });
+    tabGrid.appendChild(tabBtn);
+  });
+  container.appendChild(tabGrid);
+
+  // Achievements catalog list
+  const achievementsGrid = document.createElement('div');
+  achievementsGrid.className = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 w-full pr-1 overflow-y-auto max-h-[380px]";
+
+  ACHIEVEMENTS.forEach(ach => {
+    const isUnlocked = activePlayer.unlockedAchievements?.includes(ach.id) || false;
+    
+    let progressStr = '';
+    if (ach.id === 'balloon_wins_5') {
+      const currentWins = activePlayer.balloonWinsCount || 0;
+      progressStr = ` <span class="font-mono text-[9px] font-bold text-gray-500 font-mono">(${currentWins}/5)</span>`;
+    } else if (ach.id === 'collector_3') {
+      const currentAcc = activePlayer.unlockedAccessories?.length || 0;
+      progressStr = ` <span class="font-mono text-[9px] font-bold text-gray-500 font-mono">(${currentAcc}/3)</span>`;
+    } else if (ach.id === 'coin_lord_100') {
+      const currentCoins = activePlayer.globalCoins || 0;
+      progressStr = ` <span class="font-mono text-[9px] font-bold text-gray-500 font-mono">(${currentCoins}/100)</span>`;
+    } else if (ach.id === 'streak_3') {
+      const currentStreak = activePlayer.rewardStreak || 0;
+      progressStr = ` <span class="font-mono text-[9px] font-bold text-gray-500 font-mono">(${currentStreak}/3)</span>`;
+    }
+
+    const card = document.createElement('div');
+    if (isUnlocked) {
+      card.className = "border-4 border-black bg-[#EBFBEE] p-3 flex items-start gap-3 shadow-[3px_3px_0_rgba(0,0,0,1)] relative overflow-hidden rounded-md text-left transition-all hover:scale-101";
+      card.innerHTML = `
+        <div class="absolute -top-1.5 -right-6 w-16 h-5 bg-emerald-500 text-white border border-black flex items-center justify-center text-[7px] font-mono font-black uppercase rotate-45 select-none opacity-90 shadow-sm leading-none">
+          AÇILDI
+        </div>
+        <div class="w-10 h-10 shrink-0 rounded bg-white border-2 border-black flex items-center justify-center text-xl shadow-[1px_1px_0_rgba(0,0,0,1)] select-none">
+          ${ach.badgeEmoji}
+        </div>
+        <div class="min-w-0 flex-1 leading-normal">
+          <h4 class="text-[11px] sm:text-xs font-black text-black uppercase pr-4 truncate">${ach.name}${progressStr}</h4>
+          <p class="text-[9.5px] text-[#2D3748]/85 font-semibold mt-0.5 leading-tight">${ach.description}</p>
+          <div class="mt-1 flex items-center gap-1 select-none">
+            <span class="text-[7.5px] font-mono font-black bg-emerald-100 text-emerald-800 border border-emerald-300 px-1 py-0.5 rounded">KAZANILDI ✅</span>
+          </div>
+        </div>
+      `;
+    } else {
+      card.className = "border-4 border-gray-300 bg-neutral-50/70 p-3 flex items-start gap-3 shadow-[2px_2px_0_rgba(0,0,0,0.05)] relative overflow-hidden rounded-md text-left opacity-75";
+      card.innerHTML = `
+        <div class="absolute top-1.5 right-1.5 flex items-center justify-center text-[10px] opacity-45 select-none">
+          🔒
+        </div>
+        <div class="w-10 h-10 shrink-0 rounded bg-neutral-100 border-2 border-dashed border-gray-300 flex items-center justify-center text-xl grayscale opacity-50 select-none">
+          ${ach.badgeEmoji.substring(0, 2)}
+        </div>
+        <div class="min-w-0 flex-1 leading-normal">
+          <h4 class="text-[11px] sm:text-xs font-black text-gray-400 uppercase truncate pr-3">${ach.name}${progressStr}</h4>
+          <p class="text-[9.5px] text-gray-400 font-semibold mt-0.5 leading-tight">${ach.description}</p>
+          <div class="mt-1 flex items-center gap-1 select-none">
+            <span class="text-[7.5px] font-mono font-bold bg-gray-100 text-gray-400 border border-gray-200 px-1 py-0.5 rounded">KİLİTLİ</span>
+          </div>
+        </div>
+      `;
+    }
+    achievementsGrid.appendChild(card);
+  });
+
+  container.appendChild(achievementsGrid);
+  appRoot.appendChild(container);
+
+  // Events setup
+  setTimeout(() => {
+    document.getElementById('ach-lobby-btn')?.addEventListener('click', () => {
+      sfx.playTick();
+      setScreen('lobby');
+    });
+    document.getElementById('ach-arena-btn')?.addEventListener('click', () => {
+      sfx.playTick();
+      setScreen('gamesHub');
+    });
   }, 0);
 }
 
@@ -6515,7 +6391,7 @@ function renderBombGame() {
   });
 
   const container = document.createElement('div');
-  container.className = "w-full max-w-4xl relative z-10 flex flex-col gap-5 animate-fade-in text-black select-none";
+  container.className = "w-full max-w-4xl relative z-10 flex flex-col gap-5 animate-fade-in text-black select-none my-auto";
 
   // Header 
   const header = document.createElement('div');
@@ -6800,7 +6676,7 @@ function renderMathDashGame() {
   activePlayers.forEach(p => localScores[p.id] = 0);
 
   const container = document.createElement('div');
-  container.className = "w-full max-w-4xl relative z-10 flex flex-col gap-5 animate-fade-in text-black select-none";
+  container.className = "w-full max-w-4xl relative z-10 flex flex-col gap-5 animate-fade-in text-black select-none my-auto";
 
   // Header 
   const header = document.createElement('div');

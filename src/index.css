@@ -37,7 +37,7 @@
 }
 
 /* Neobrutalist focus glows */
-.glow-p1 { box-shadow: 6px 6px 0px 0px rgb(96, 69, 69); }
+.glow-p1 { box-shadow: 6px 6px 0px 0px rgba(0, 0, 0, 1); }
 .glow-p2 { box-shadow: 6px 6px 0px 0px rgba(0, 0, 0, 1); }
 .glow-p3 { box-shadow: 6px 6px 0px 0px rgba(0, 0, 0, 1); }
 .glow-p4 { box-shadow: 6px 6px 0px 0px rgba(0, 0, 0, 1); }
@@ -79,4 +79,246 @@
 .animate-pulse-gentle {
   animation: pulseGentle 1.6s infinite alternate cubic-bezier(0.4, 0, 0.6, 1);
 }
+
+
+/* ==========================================
+   LANDSCAPE SMARTPHONE HEIGHT OPTIMIZATIONS
+   ========================================== */
+
+/* Overrides to compact the UI when the screen height is short (landscape phones/tablets) */
+@media (max-height: 520px) {
+  #root, #root > div {
+    border-width: 4px !important;
+    padding: 0.25rem !important;
+  }
+  
+  /* Compact game container wrappers */
+  .h-\[90vh\] {
+    height: 98vh !important;
+    max-height: 100vh !important;
+    gap: 0.25rem !important;
+  }
+
+  /* Shrink all large card/wrapper max-widths to fit wider, but lower height spaces */
+  .max-w-2xl, .max-w-3xl, .max-w-4xl, .max-w-5xl, .max-w-6xl, .max-w-xl {
+    max-width: 95vw !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+  }
+
+  /* Make sure modal overlays allow scrolling */
+  .fixed.inset-0, .absolute.inset-0 {
+    padding: 0.2rem !important;
+    overflow-y: auto !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+
+  /* Shrink neobrutalist card paddings */
+  .p-6, .p-10, .sm:p-10, .p-5, .p-8, .sm:p-8, .p-4 {
+    padding: 0.35rem !important;
+  }
+
+  .p-3, .p-3\.5 {
+    padding: 0.25rem !important;
+  }
+
+  /* Shrink borders globally on mobile to maximize viewport rendering area */
+  .border-4 {
+    border-width: 2.25px !important;
+  }
+  .border-3 {
+    border-width: 1.5px !important;
+  }
+  .border-[8px] {
+    border-width: 3.5px !important;
+  }
+  .border-\[16px\] {
+    border-width: 4px !important;
+  }
+
+  /* Convert vertical stacks with sidebar into side-by-side grids (Lobby, Games, Sideboards) */
+  .grid-cols-1.md\:grid-cols-4 {
+    grid-template-columns: 1fr 3.2fr !important;
+    display: grid !important;
+    gap: 0.35rem !important;
+    align-items: stretch !important;
+  }
+  
+  .md\:col-span-1 {
+    grid-column: span 1 !important;
+  }
+  
+  .md\:col-span-3 {
+    grid-column: span 3 !important;
+  }
+
+  /* Convert other large blocks */
+  .lg\:grid-cols-12 {
+    grid-template-columns: 4fr 8fr !important;
+    display: grid !important;
+    gap: 0.35rem !important;
+    align-items: stretch !important;
+  }
+  .lg\:col-span-5 {
+    grid-column: span 1 !important;
+  }
+  .lg\:col-span-7 {
+    grid-column: span 1 !important;
+  }
+
+  /* Compact spacing gap helpers */
+  .space-y-8, .space-y-6, .space-y-5 {
+    gap: 0.3rem !important;
+  }
+
+  .space-y-4, .space-y-3.5, .space-y-3 {
+    gap: 0.15rem !important;
+  }
+  
+  .space-y-2.5, .space-y-2, .space-y-1.5, .space-y-1 {
+    gap: 0.1rem !important;
+  }
+
+  /* Compact margins */
+  .my-4, .my-6, .mt-6, .mb-4, .mt-4, .mb-6, .mt-5, .mb-5 {
+    margin-top: 0.15rem !important;
+    margin-bottom: 0.15rem !important;
+  }
+
+  /* Downscale display typography dynamically */
+  h1 {
+    font-size: 1.15rem !important;
+  }
+  h2, .text-3xl, .text-2xl {
+    font-size: 0.9rem !important;
+    line-height: 1.1 !important;
+  }
+
+  h3, .text-xl, .text-lg {
+    font-size: 0.78rem !important;
+    line-height: 1.1 !important;
+  }
+
+  p, .text-sm, .text-xs, span {
+    font-size: 0.68rem !important;
+    line-height: 1.2 !important;
+  }
+
+  /* General buttons scaling */
+  button, [role="button"], .cursor-pointer {
+    padding-top: 0.25rem !important;
+    padding-bottom: 0.25rem !important;
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+    font-size: 0.65rem !important;
+  }
+
+  /* Specific bumper buttons layout optimization */
+  .py-3, .py-3\.5, .py-4, .py-5, .py-6, [id^="cd-bumper-"], [id^="ct-bumper-"], [id^="tap-btn-"] {
+    padding-top: 0.25rem !important;
+    padding-bottom: 0.25rem !important;
+    font-size: 0.6rem !important;
+  }
+
+  /* Grid spacing adjustments */
+  .grid-cols-2, .grid-cols-3, .grid-cols-4, .grid-cols-5, .grid-cols-6 {
+    gap: 0.25rem !important;
+  }
+
+  /* ================= MINI-GAME SPECIFIC RESETS ================= */
+
+  /* 1. Memory Game Arena scaling */
+  .max-w-\[480px\] {
+    max-width: 170px !important;
+    padding: 0.2rem !important;
+    gap: 0.15rem !important;
+  }
+  .perspective-1000 {
+    height: 100% !important;
+  }
+  .aspect-square {
+    aspect-ratio: auto !important; /* Allow the aspect ratio to remain flat */
+  }
+  .perspective-1000 .border-4, .perspective-1000 .border-2 {
+    border-width: 1.5px !important;
+  }
+  .perspective-1000 span {
+    font-size: 1.1rem !important; /* Keep emojis or math expressions perfectly visible */
+  }
+
+  /* 2. Balloon inflation arena resets */
+  .min-h-\[220px\] {
+    min-height: 65px !important;
+  }
+  svg.w-28, svg.w-32 {
+    width: 2.8rem !important;
+    height: 2.8rem !important;
+  }
+
+  /* 3. Race Lane Height & avatar scaling */
+  .h-\[62px\] {
+    height: 38px !important;
+    border-width: 2px !important;
+    border-radius: 4px !important;
+  }
+  .h-\[62px\] span {
+    font-size: 0.6rem !important;
+  }
+  /* Hide item details from lane on ultra short devices to save space */
+  .h-\[62px\] .text-\[6\.5px\] {
+    display: none !important;
+  }
+  .h-\[62px\] img, .h-\[62px\] .avatar-circle {
+    transform: scale(0.6) !important;
+  }
+
+  /* 4. Color Trap & Click Derby chambers resets */
+  .min-h-\[580px\] {
+    min-height: 150px !important;
+  }
+  .min-h-\[300px\], .min-h-\[350px\], .min-h-\[360px\], .min-h-\[290px\], .min-h-\[200px\] {
+    min-height: 100px !important;
+  }
+
+  /* Status and visual avatars reduction */
+  .w-14, .h-14, .w-16, .h-16 {
+    width: 2rem !important;
+    height: 2rem !important;
+  }
+  .w-12, .h-12 {
+    width: 1.65rem !important;
+    height: 1.65rem !important;
+  }
+  .w-10, .h-10 {
+    width: 1.35rem !important;
+    height: 1.35rem !important;
+  }
+  .w-8, .h-8 {
+    width: 1.15rem !important;
+    height: 1.15rem !important;
+  }
+  .w-6, .h-6 {
+    width: 0.95rem !important;
+    height: 0.95rem !important;
+  }
+
+  /* Overrides to make sure text colors remain extremely visible inside headers */
+  .drop-shadow-\[2px_2px_0_rgba\(0\,0\,0\,0\.15\)\] {
+    font-size: 1.5rem !important;
+  }
+}
+
+/* ==========================================
+   JUICY CLICK/TAP RESPONSIVENESS (CLICKY EFFEKT)
+   ========================================== */
+button, [role="button"], .interactive-btn {
+  transition: transform 0.1s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.1s ease !important;
+}
+
+button:active, [role="button"]:active, .interactive-btn:active {
+  transform: scale(0.95) translate(1px, 1px) !important;
+  box-shadow: 1px 1px 0px rgba(0, 0, 0, 1) !important;
+}
+
 
